@@ -6,7 +6,7 @@
 <title>RAG Lab</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+Thai:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+Thai:wght@400;500;700&family=Space+Grotesk:wght@500;700&family=VT323&display=swap" rel="stylesheet">
 <style>
   :root {
     --paper: #f1ece1; --card: #fbf8f1; --ink: #15130f; --muted: #7c7365; --line: #d6cdbb;
@@ -168,6 +168,7 @@
   <div class="tabs" role="tablist">
     <button class="tab" role="tab" id="t-search" aria-selected="true">ค้นหา · แผนที่</button>
     <button class="tab" role="tab" id="t-upload" aria-selected="false">อัปโหลดเอกสาร</button>
+    <button class="tab" role="tab" id="t-globe" aria-selected="false">โลกบล็อก 3D</button>
   </div>
 </header>
 
@@ -175,10 +176,10 @@
   <!-- ======== SEARCH ======== -->
   <section id="search">
     <h1>ค้นด้วยความหมาย</h1>
-    <p class="lead">ค้นกฎหมายไทย 36 ฉบับและเอกสารที่คุณอัปโหลดพร้อมกัน พิมพ์เป็นภาษาไทยหรืออังกฤษ ระบบแสดง 10 ชิ้นที่ใกล้ที่สุดและโชว์ตำแหน่งบนแผนที่ความหมาย</p>
+    <p class="lead">ค้นเอกสารทั้งหมดในคลัง (เอกสารที่คุณอัปโหลด และคลังกฎหมายถ้ามี) พิมพ์เป็นภาษาไทยหรืออังกฤษ ระบบแสดง 10 ชิ้นที่ใกล้ที่สุดและโชว์ตำแหน่งบนแผนที่ความหมาย</p>
     <div class="notice hidden" id="notice"></div>
     <form class="qrow" id="qform">
-      <input id="q" autocomplete="off" aria-label="คำค้น" placeholder="เช่น หลักเกณฑ์การจัดซื้อจัดจ้างภาครัฐ">
+      <input id="q" autocomplete="off" aria-label="คำค้น" placeholder="พิมพ์คำถามหรือคำค้น">
       <button class="btn" id="go">ค้นหา</button>
       <button class="btn ask" id="ask" type="button">ถาม AI</button>
     </form>
@@ -199,7 +200,7 @@
           <canvas id="map" role="img" aria-label="แผนที่ความหมายของกฎหมายและเอกสารที่อัปโหลด"></canvas>
           <div class="loading" id="loading">กำลังโหลดแผนที่…</div>
           <div class="tip hidden" id="tip"></div>
-          <div class="overlay">ลากเพื่อเลื่อน · ล้อเมาส์เพื่อซูม · ดับเบิลคลิกเพื่อรีเซ็ต · คลิกจุดเพื่อปักหมุด · จุดมีวงขาว = เอกสารของคุณ</div>
+          <div class="overlay">ลากเพื่อเลื่อน · ล้อเมาส์เพื่อซูม · ดับเบิลคลิกเพื่อรีเซ็ต · คลิกจุดเพื่อปักหมุด</div>
         </div>
         <div class="detail hidden" id="detail"></div>
         <div class="laws" id="laws"></div>
@@ -208,6 +209,13 @@
   </section>
 
   <!-- ======== UPLOAD ======== -->
+  <!-- ======== 3D GLOBE ======== -->
+  <section id="globe" class="hidden">
+    <h1>โลกบล็อกความหมาย 3 มิติ</h1>
+    <p class="lead">ภาพรวมเป็นโลกก้อนบล็อก แต่ละไบโอมคือโซนเนื้อหา คลิกไบโอมเพื่อเข้าไปดูเฉพาะจุดในโซนนั้นทีละชั้น ค้นแล้วดูได้ว่าผลลัพธ์อยู่ไบโอมไหน</p>
+    <div id="globe-host"></div>
+  </section>
+
   <section id="upload" class="hidden">
     <h1>อัปโหลดแล้วขึ้นแผนที่ทันที</h1>
     <p class="lead">ลากไฟล์หรือทั้งโฟลเดอร์มาวาง ระบบดึงข้อความ (OCR เมื่อจำเป็น) หั่น สร้างเวกเตอร์ แล้วเพิ่มเป็นจุดใหม่บนแผนที่ และค้นเจอได้ทันที ไม่ต้องทำอะไรต่อ</p>
@@ -220,6 +228,7 @@
     <input type="file" id="picker" multiple hidden>
     <input type="file" id="dirpicker" webkitdirectory multiple hidden>
 
+    <div class="banner hidden" id="limit" role="alert"><b id="limit-text"></b></div>
     <div class="banner hidden" id="banner"><b id="banner-text"></b><button class="btn" id="banner-go">ดูบนแผนที่ →</button></div>
     <div class="overall hidden" id="overall">
       <div class="big" id="o-total">0<small>ไฟล์</small></div>
@@ -244,16 +253,33 @@ async function api(path, opts) {
 }
 
 /* ================= tabs ================= */
+let globeCtl = null, globeTried = false;
+async function openGlobe() {
+  if (globeCtl) return globeCtl.refresh();
+  if (globeTried) return;
+  globeTried = true;
+  try {
+    const m = await import('/static/globe.js');
+    globeCtl = m.start($('#globe-host'), { api, el });
+  } catch (e) {
+    globeTried = false;
+    const box = $('#globe-host');
+    box.replaceChildren(el('p', 'lead', 'ยังโหลดลูกโลกไม่ได้ · ต้องมีไฟล์ static/three.module.min.js (ดูวิธีใน README) · ' + e.message));
+  }
+}
+
 function showTab(name) {
-  for (const t of ['search', 'upload']) {
+  for (const t of ['search', 'upload', 'globe']) {
     $('#' + t).classList.toggle('hidden', t !== name);
     $('#t-' + t).setAttribute('aria-selected', t === name);
   }
   if (name === 'search') requestAnimationFrame(() => resizeMap());
+  else if (name === 'globe') openGlobe();
   else loadLibrary();
 }
 $('#t-search').onclick = () => showTab('search');
 $('#t-upload').onclick = () => showTab('upload');
+$('#t-globe').onclick = () => showTab('globe');
 
 /* ================= map ================= */
 const G = {
@@ -281,9 +307,10 @@ async function loadGraph() {
     G.isoLock = Math.min(G.isoLock, G.laws.length - 1);
     // world bounds: the law area plus anything uploaded that falls outside it
     let x0 = 0, x1 = 1000, y0 = 0, y1 = 1000;
-    for (let i = 0; i < G.n; i++) if (G.isUser[i]) { x0 = Math.min(x0, G.wx[i]); x1 = Math.max(x1, G.wx[i]); y0 = Math.min(y0, G.wy[i]); y1 = Math.max(y1, G.wy[i]); }
+    for (let i = 0; i < G.n; i++) if (G.isUser[i] || !d.base) { x0 = Math.min(x0, G.wx[i]); x1 = Math.max(x1, G.wx[i]); y0 = Math.min(y0, G.wy[i]); y1 = Math.max(y1, G.wy[i]); }
     G.bounds = { x0, x1, y0, y1 };
     G.ready = true; $('#loading').classList.add('hidden');
+    $('#chips').classList.toggle('hidden', !G.laws.some(l => !l.user));  // the example questions are about the Thai-law corpus
     buildLegend(); computeFit(); G.firstView ? requestDraw() : (G.firstView = true, resetView(false));
   } catch (e) { $('#loading').textContent = e.message; $('#loading').classList.remove('hidden'); }
 }
@@ -293,7 +320,7 @@ function buildLegend() {
   G.laws.forEach((law, l) => {
     const b = el('button', 'law-btn' + (law.user ? ' user' : '')); b.type = 'button'; b.setAttribute('aria-pressed', l === G.isoLock); b.title = law.name;
     const dot = el('i'); dot.style.background = lawColor(l, 1);
-    const name = law.user ? '★ ' + law.name : law.name.replace(/^พระราชบัญญัติ/, 'พ.ร.บ.').replace(/^พระราชกำหนด/, 'พ.ร.ก.');
+    const name = law.user ? law.name : law.name.replace(/^พระราชบัญญัติ/, 'พ.ร.บ.').replace(/^พระราชกำหนด/, 'พ.ร.ก.');
     b.append(dot, el('span', '', name), el('small', '', String(law.count)));
     b.onmouseenter = () => { G.isoHover = l; requestDraw(); };
     b.onmouseleave = () => { G.isoHover = -1; requestDraw(); };
@@ -366,34 +393,27 @@ function draw() {
   ctx.globalCompositeOperation = 'source-over';
   ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--stage').trim() || '#0d0c0a';
   ctx.fillRect(0, 0, w, h);
-  ctx.globalCompositeOperation = 'lighter';  // overlapping glows add up
-  const zoom = Math.log2(k / G.fit + 1), radius = Math.min(7, 1.6 + zoom * 1.5);
+  // thousands of points: plain small squares in one path are far cheaper than glowing circles
+  const dense = G.n > DENSE_POINTS;
+  ctx.globalCompositeOperation = dense ? 'source-over' : 'lighter';  // overlapping glows add up
+  const zoom = Math.log2(k / G.fit + 1), radius = Math.min(dense ? 3.2 : 7, 1.6 + zoom * 1.5);
   const onScreen = (x, y) => x > -20 && x < w + 20 && y > -20 && y < h + 20;
 
   G.nodesByLaw.forEach((list, l) => {
     const dim = dimIso >= 0 && l !== dimIso, user = G.laws[l].user;
-    ctx.fillStyle = lawColor(l, dim ? .1 : focus && !user ? .42 : .95);
-    const r = user ? radius + 1.2 : radius;
+    ctx.fillStyle = lawColor(l, dim ? .1 : focus && !user ? .42 : dense ? .8 : .95);
+    const r = radius;
     ctx.beginPath();
     for (const i of list) {
       const x = G.wx[i] * k + ox, y = G.wy[i] * k + oy;
       if (!onScreen(x, y)) continue;
-      ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, 6.2832);
+      if (dense) ctx.rect(x - r, y - r, r * 2, r * 2);
+      else { ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, 6.2832); }
     }
     ctx.fill();
   });
 
   ctx.globalCompositeOperation = 'source-over';
-  G.laws.forEach((law, l) => {  // white ring marks nodes you uploaded
-    if (!law.user || (dimIso >= 0 && l !== dimIso)) return;
-    ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 1.2; ctx.beginPath();
-    for (const i of G.nodesByLaw[l]) {
-      const x = sx(i), y = sy(i);
-      if (!onScreen(x, y)) continue;
-      ctx.moveTo(x + radius + 3.4, y); ctx.arc(x, y, radius + 3.4, 0, 6.2832);
-    }
-    ctx.stroke();
-  });
   if (G.hover >= 0 && G.hover !== G.pin) ring(G.hover, '#ffffff', radius + 5);
   if (G.pin >= 0) ring(G.pin, '#ee4a24', radius + 7);
 
@@ -499,11 +519,15 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#mappan
 const QUERIES = ['การจดทะเบียนบริษัทมหาชนจำกัดต้องทำอย่างไร', 'หน้าที่ของกรรมการบริษัท', 'หลักเกณฑ์การจัดซื้อจัดจ้างภาครัฐ',
   'พนักงานรัฐวิสาหกิจถูกเลิกจ้างได้เมื่อใด', 'ผู้ประกอบกิจการพลังงานต้องขออนุญาตอย่างไร', 'คนต่างด้าวประกอบธุรกิจในไทยได้หรือไม่',
   'กองทุนสำรองเลี้ยงชีพคืออะไร', 'What is a public limited company?'];
-for (const text of QUERIES) {
-  const b = el('button', 'chip', text); b.type = 'button';
-  b.onclick = () => { $('#q').value = text; search(text); };
-  $('#chips').append(b);
+function buildQueryChips() {
+  $('#chips').replaceChildren();
+  for (const text of QUERIES) {
+    const b = el('button', 'chip', text); b.type = 'button';
+    b.onclick = () => { $('#q').value = text; search(text); };
+    $('#chips').append(b);
+  }
 }
+buildQueryChips();
 function showNotice(msg) { const n = $('#notice'); n.textContent = msg || ''; n.classList.toggle('hidden', !msg); }
 
 async function checkStatus() {
@@ -583,11 +607,12 @@ async function askAI() {
   const q = $('#q').value.trim(); if (!q) return;
   const box = $('#answer'); box.classList.remove('hidden');
   const head = el('div', 'ahead'); head.append('คำตอบจาก AI');
-  box.replaceChildren(head, el('div', 'abody wait', 'กำลังถาม AI… (ค้นหา → ส่งให้โมเดลอ่าน → สรุปคำตอบ)'));
+  box.replaceChildren(head, el('div', 'abody wait', 'กำลังถาม AI… (ส่ง 4 ชิ้นให้โมเดลอ่านก่อน ถ้าไม่พบจะขยายเป็น 8 ชิ้น อาจใช้เวลาเพิ่ม)'));
   $('#ask').disabled = true;
   try {
     const d = await api('/api/answer?q=' + encodeURIComponent(q));
-    head.append(el('span', '', `${d.model} · ${d.seconds} วินาที · ${d.tokens} โทเค็น`));
+    const grown = d.rounds && d.rounds.length > 1 ? ` (ขยาย ${d.rounds.map(r => r.used).join('→')})` : '';
+    head.append(el('span', '', `${d.model} · ${d.seconds} วินาที · ${d.tokens} โทเค็น · ใช้ ${d.used_k} ชิ้น${grown}`));
     const body = el('div', 'abody'); body.append(citeText(d.answer, d.sources));
     const src = el('div', 'asrc');
     for (const s of d.sources) {
@@ -605,29 +630,42 @@ async function askAI() {
 $('#ask').onclick = askAI;
 
 /* ================= upload ================= */
-const U = { cfg: null, items: [], pumping: 0, timer: null, added: [], seq: 0 };
-const KIND = { pdf: 'PDF', image: 'IMG', office: 'DOC', text: 'TXT' };
+const DENSE_POINTS = 4000;  // above this many points the map draws simple squares (keeps panning and zooming smooth)
+const U = { cfg: null, items: [], byJob: new Map(), pumping: 0, timer: null, added: [], seq: 0 };
+const POLL_IDS = 300, GRAPH_EVERY_MS = 6000;  // big batches: reload the map at most this often while files are still coming in
+let lastGraphAt = 0;
+const KIND = { pdf: 'PDF', image: 'IMG', office: 'DOC', text: 'TXT', zip: 'ZIP' };
 const TERMINAL = new Set(['done', 'error', 'skipped']);
 const STATUS_TH = { waiting: 'รอ', uploading: 'กำลังอัปโหลด', queued: 'รอคิว', analyzing: 'วิเคราะห์', running: 'ประมวลผล', embedding: 'สร้างเวกเตอร์', done: 'เสร็จ', error: 'ผิดพลาด', skipped: 'ข้าม' };
 const HIDDEN = /(^|\/)(\.[^/]*|~\$[^/]*|thumbs\.db|desktop\.ini)$/i;
 
 async function loadConfig() {
   U.cfg = await api('/api/config');
-  $('#formats').textContent = 'รองรับ: ' + U.cfg.extensions.map(e => e.slice(1)).join(' · ') + ' · ไฟล์ละไม่เกิน ' + U.cfg.max_mb + ' MB';
+  $('#formats').textContent = 'รองรับ: ' + U.cfg.extensions.map(e => e.slice(1)).join(' · ') + ' · ไฟล์ละไม่เกิน ' + U.cfg.max_mb + ' MB'
+    + ` · ลากได้ครั้งละไม่เกิน ${U.cfg.max_drop_files} ไฟล์ ถ้ามากกว่านั้นให้บีบเป็น .zip แล้วอัปไฟล์เดียว`;
 }
 
 const extOf = n => { const m = /\.[^./\\]+$/.exec(n); return m ? m[0].toLowerCase() : ''; };
 
+function showLimit(text) { $('#limit-text').textContent = text; $('#limit').classList.remove('hidden'); }
+
 function addFiles(entries) {
   if (!U.cfg) return;
+  const real = entries.filter(e => !HIDDEN.test(e.rel));
+  const queued = U.items.filter(i => !TERMINAL.has(i.status)).length;
+  if (real.length + queued > U.cfg.max_drop_files) {
+    showLimit(`เลือกมา ${real.length.toLocaleString()} ไฟล์${queued ? ` (ในคิวยังค้างอีก ${queued})` : ''} เกินที่รับพร้อมกันได้ ${U.cfg.max_drop_files} ไฟล์ · `
+      + `ถ้าไฟล์เยอะให้บีบทั้งโฟลเดอร์เป็น .zip แล้วอัปไฟล์เดียว (ไม่เกิน ${U.cfg.max_zip_mb} MB · อ่านได้เฉพาะ txt md csv json html docx pptx xlsx · PDF และภาพให้อัปแยก)`);
+    return;
+  }
+  $('#limit').classList.add('hidden');
   let fresh = 0;
-  for (const { file, rel } of entries) {
-    if (HIDDEN.test(rel)) continue;
+  for (const { file, rel } of real) {
     const it = { key: ++U.seq, name: rel, file, status: 'waiting', kind: '', job: null, sum: null, error: '', note: '' };
     const ext = extOf(rel);
     if (U.cfg.legacy[ext]) { it.status = 'skipped'; it.note = U.cfg.legacy[ext]; }
     else if (!U.cfg.extensions.includes(ext)) { it.status = 'skipped'; it.note = `ไม่รองรับไฟล์ชนิด ${ext || '(ไม่มีนามสกุล)'}`; }
-    else if (file.size > U.cfg.max_mb * 1048576) { it.status = 'skipped'; it.note = `ใหญ่เกิน ${U.cfg.max_mb} MB`; }
+    else if (file.size > (ext === '.zip' ? U.cfg.max_zip_mb : U.cfg.max_mb) * 1048576) { it.status = 'skipped'; it.note = `ใหญ่เกิน ${ext === '.zip' ? U.cfg.max_zip_mb : U.cfg.max_mb} MB`; }
     else if (file.size === 0) { it.status = 'skipped'; it.note = 'ไฟล์ว่าง'; }
     U.items.push(it); fresh++;
   }
@@ -647,7 +685,7 @@ async function pump() {
 async function upload(it) {
   try {
     const r = await api('/api/upload?name=' + encodeURIComponent(it.name), { method: 'POST', body: it.file });
-    it.job = r.job; it.status = 'queued'; it.file = null;
+    it.job = r.job; U.byJob.set(r.job, it); it.status = 'queued'; it.file = null;
     if (!U.timer) U.timer = setInterval(poll, 800);
   } catch (e) { it.status = 'error'; it.error = e.message; }
   renderRow(it);
@@ -661,20 +699,24 @@ async function poll() {
     return;
   }
   try {
-    const { jobs } = await api('/api/jobs?ids=' + active.map(i => i.job).join(','));
+    // the server processes jobs in order, so the oldest unfinished ones are the only ones that can change soon;
+    // asking for a few hundred at a time keeps the URL short even with thousands of files queued
+    const ids = active.slice(0, POLL_IDS).map(i => i.job);
+    const { jobs } = await api('/api/jobs?ids=' + ids.join(','));
     for (const s of jobs) {
-      const it = U.items.find(i => i.job === s.id); if (!it) continue;
+      const it = U.byJob.get(s.id); if (!it) continue;
       const was = it.status; it.sum = s; it.status = s.status; it.kind = s.kind; it.error = s.error; it.note = s.note;
       if (s.status === 'done' && was !== 'done') { needGraph = true; U.added.push(it); }
       renderRow(it);
     }
-    if (needGraph) { needGraph = false; loadGraph(); loadLibrary(); }
+    if (needGraph && Date.now() - lastGraphAt > GRAPH_EVERY_MS) { needGraph = false; lastGraphAt = Date.now(); loadGraph(); loadLibrary(); }
   } catch (e) { /* transient; next tick retries */ }
   renderOverall();
 }
 
 function finishBatch() {
   renderOverall();
+  if (needGraph) { needGraph = false; lastGraphAt = Date.now(); loadGraph(); loadLibrary(); }
   checkStatus();  // chat unlocks as soon as the queue is empty
   const ok = U.items.filter(i => i.status === 'done');
   const pts = ok.reduce((n, i) => n + (i.sum?.chunks || 0), 0);
@@ -695,14 +737,14 @@ function renderQueue() { for (const it of U.items) renderRow(it); renderOverall(
 
 function renderRow(it) {
   const box = $('#queue');
-  let row = box.querySelector(`[data-k="${it.key}"]`);
+  let row = it.row;
   if (!row) {
     row = el('article', 'qitem'); row.dataset.k = it.key;
     const head = el('div', 'qhead');
     head.append(el('span', 'kind', '·'), el('span', 'qname', it.name), el('span', 'chipst', ''), el('span', 'acts'));
     const bar = el('div', 'qbar'); bar.append(el('i'));
     row.append(head, bar, el('p', 'qnote', ''), el('div', 'qdetail hidden'));
-    box.append(row);
+    box.append(row); it.row = row;
   }
   const st = it.status, s = it.sum;
   row.querySelector('.kind').textContent = KIND[it.kind || kindGuess(it.name)] || '·';
@@ -725,7 +767,7 @@ function renderRow(it) {
   }
   if (st === 'done') { const map = el('button', 'mini', 'ดูบนแผนที่'); map.onclick = () => { showTab('search'); setTimeout(() => focusDoc(it.name), 80); }; acts.append(map); }
 }
-const kindGuess = n => ({ '.pdf': 'pdf', '.png': 'image', '.jpg': 'image', '.jpeg': 'image', '.tif': 'image', '.tiff': 'image', '.bmp': 'image', '.webp': 'image', '.docx': 'office', '.pptx': 'office', '.xlsx': 'office' }[extOf(n)] || 'text');
+const kindGuess = n => ({ '.pdf': 'pdf', '.png': 'image', '.jpg': 'image', '.jpeg': 'image', '.tif': 'image', '.tiff': 'image', '.bmp': 'image', '.webp': 'image', '.docx': 'office', '.pptx': 'office', '.xlsx': 'office', '.zip': 'zip' }[extOf(n)] || 'text');
 
 async function toggleDetail(it, row, btn) {
   const box = row.querySelector('.qdetail');
@@ -757,11 +799,11 @@ async function loadLibrary() {
       const view = el('button', 'mini', 'ดูบนแผนที่'); view.onclick = () => { showTab('search'); setTimeout(() => focusDoc(d.name), 80); };
       const del = el('button', 'mini', 'ลบ');
       del.onclick = async () => {
-        if (!confirm(`ลบ "${d.name}" ออกจากคลังและแผนที่?\n(ไฟล์ต้นฉบับที่อัปโหลดยังอยู่ในโฟลเดอร์ uploads)`)) return;
+        if (!confirm(`ลบ "${d.name}"${d.files > 1 ? ` (${d.files} ไฟล์)` : ''} ออกจากคลังและแผนที่?\n(ไฟล์ต้นฉบับที่อัปโหลดยังอยู่ในโฟลเดอร์ uploads)`)) return;
         await api('/api/delete?name=' + encodeURIComponent(d.name), { method: 'POST' });
         loadGraph(); loadLibrary();
       };
-      r.append(el('span', 'n', d.name), el('small', '', `${d.chunks} จุด`), view, del);
+      r.append(el('span', 'n', d.name), el('small', '', (d.files > 1 ? `${d.files} ไฟล์ · ` : '') + `${d.chunks} จุด`), view, del);
       return r;
     }));
   } catch (e) { /* library is optional */ }

@@ -40,3 +40,6 @@ ocr_pdf.py
 ocr_vl.py
 ocr_retrieval_test.py
 retrieval_test_results.txt
+
+test_corpus/
+static/three.module.min.js

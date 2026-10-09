@@ -1,16 +1,15 @@
 <#
 .SYNOPSIS
-  One-shot setup for RAG Lab (Windows PowerShell): venv, packages, embedding model, law corpus, embeddings.
+  One-shot setup for RAG Lab (Windows PowerShell): venv, packages, embedding model. Documents are added from the web page (sample data: dataset/).
 
 .PARAMETER GpuOcr    Create .venv-paddle with paddlepaddle-gpu (fast OCR on an NVIDIA GPU).
 .PARAMETER CpuOcr    Install CPU PaddleOCR into .venv instead (slow OCR, no second venv).
-.PARAMETER SkipData  Do not build the law corpus / embeddings (do it later with the commands in README.md).
 .PARAMETER DryRun    Print every command without running it.
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File setup.ps1 -GpuOcr
 #>
-param([switch]$GpuOcr, [switch]$CpuOcr, [switch]$SkipData, [switch]$DryRun)
+param([switch]$GpuOcr, [switch]$CpuOcr, [switch]$DryRun)
 
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
@@ -71,13 +70,15 @@ if (-not (Test-Path "Qwen3-Embedding-0.6B\model.safetensors")) {
     Run $py @("-c", "from huggingface_hub import snapshot_download as s; s('Qwen/Qwen3-Embedding-0.6B', local_dir='Qwen3-Embedding-0.6B')")
 } else { Write-Host "    already downloaded" }
 
-# --- data --------------------------------------------------------------------------------------------------------------
-if (-not $SkipData) {
-    Step "Building the law corpus (NitiBench-Statute, about 2 MB download)"
-    if (-not (Test-Path "corpus.jsonl")) { Run $py @("build_corpus.py") } else { Write-Host "    corpus.jsonl already exists" }
-    Step "Embedding the corpus (a few minutes on a GPU)"
-    if (-not (Test-Path "embeddings.npy")) { Run $py @("embed_corpus.py", "16") } else { Write-Host "    embeddings.npy already exists" }
-}
+# --- 3D globe library (one file, MIT licence) ---------------------------------------------------------------
+Step "Downloading three.js for the 3D globe tab (about 0.7 MB)"
+if (-not (Test-Path "static\three.module.min.js")) {
+    Write-Host "    static\three.module.min.js  <-  cdn.jsdelivr.net/npm/three@0.160.0"
+    if (-not $DryRun) {
+        New-Item -ItemType Directory -Force static | Out-Null
+        Invoke-WebRequest "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.min.js" -OutFile "static\three.module.min.js"
+    }
+} else { Write-Host "    already downloaded" }
 
 Write-Host "`nDone. Start the app with:  powershell -ExecutionPolicy Bypass -File run.ps1" -ForegroundColor Green
 if ($DryRun) { Write-Host "(dry run: nothing was executed)" -ForegroundColor Yellow }

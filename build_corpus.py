@@ -1,80 +1,44 @@
-"""Build the Thai-law test corpus from NitiBench-Statute -> corpus.jsonl
+"""Test tool: chunk a folder of documents EXACTLY the way the web upload does -> test_corpus/corpus.jsonl
 
-NitiBench-Statute: 5,127 sections of 35 Thai statutes (mainly corporate/commercial law), MIT license.
-Each dataset row is one section; `section_content` already starts with the law name and section number.
+It does not re-implement anything: the reader (extractors.py), the splitter and the row format are the app's own
+(app.make_rows), and each file is named like the web names a dropped folder (<folder name>/<relative path>),
+so chunk texts and ids match what the web produces for the same folder.
 
-usage: python build_corpus.py
+usage: python build_corpus.py [folder=dataset/nitibench-statute/upload]
+Reads txt md csv json html docx pptx xlsx (PDF and images need OCR: upload those on the web page).
+Output goes to test_corpus/, never to the app's own data files.
 """
 import json
-import re
+import sys
 from pathlib import Path
 
-from datasets import load_dataset
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+import app
+import extractors as ex
 
 HERE = Path(__file__).parent
-DATASET_IDS = ("vistec-AI/nitibench-statute", "VISAI-AI/nitibench-statute")  # card and URL disagree; try both
-SPLIT = "ccl"
-
-CHUNK_SIZE = 800  # characters per chunk
-CHUNK_OVERLAP = 100  # characters shared between neighbouring chunks
-
-splitter = RecursiveCharacterTextSplitter(
-    chunk_size=CHUNK_SIZE,
-    chunk_overlap=CHUNK_OVERLAP,
-    # paragraph -> line -> space -> character (Thai has no spaces between words)
-    separators=["\n\n", "\n", " ", ""],
-)
+OUT = HERE / "test_corpus"
+READABLE = ex.TEXT_EXT | ex.HTML_EXT | ex.OFFICE_EXT
 
 
-def load_sections():
-    last_error = None
-    for dataset_id in DATASET_IDS:
-        try:
-            return load_dataset(dataset_id, split=SPLIT)
-        except Exception as exc:  # noqa: BLE001 - try the next repo id
-            last_error = exc
-            print(f"could not load {dataset_id}: {type(exc).__name__}", flush=True)
-    raise SystemExit(f"dataset not available: {last_error}")
-
-
-def clean(text: str) -> str:
-    text = re.sub(r"[ \t ]+", " ", text)
-    return re.sub(r"\n\s*\n+", "\n\n", text).strip()
-
-
-def chunk_section(row: dict) -> list[dict]:
-    text = clean(row["section_content"])
-    if not text:
-        return []
-    law, number = row["law_name"], row["section_num"]
-    pieces = splitter.split_text(text)
-    rows = []
-    for k, piece in enumerate(pieces):
-        # the first piece already carries the law name and section; give later pieces the same context
-        body = piece if k == 0 else f"{law} มาตรา {number}: {piece}"
-        rows.append(
-            {
-                "id": f"law-{row['law_code']}-{number}-c{k}",
-                "src": "law",
-                "law_name": law,
-                "section_num": number,
-                "text": body,
-            }
-        )
-    return rows
+def web_name(folder: Path, file: Path) -> str:
+    """Name the web gives a file inside a dropped folder: '<folder>/<sub>/<file>' passed through safe_relpath."""
+    return app.safe_relpath(f"{folder.name}/{file.relative_to(folder).as_posix()}")
 
 
 def main() -> None:
-    sections = load_sections()
-    rows = [chunk for row in sections for chunk in chunk_section(row)]
-    with open(HERE / "corpus.jsonl", "w", encoding="utf-8") as f:
-        for r in rows:
-            f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    laws = {r["law_name"] for r in rows}
-    lengths = sorted(len(r["text"]) for r in rows)
-    print(f"sections: {len(sections)} | chunks: {len(rows)} | laws: {len(laws)}")
-    print(f"chunk length min/median/max: {lengths[0]}/{lengths[len(lengths) // 2]}/{lengths[-1]}")
+    folder = Path(sys.argv[1]) if len(sys.argv) > 1 else HERE / "dataset" / "nitibench-statute" / "upload"
+    files = sorted(f for f in folder.rglob("*") if f.is_file() and f.suffix.lower() in READABLE)
+    if not files:
+        raise SystemExit(f"no readable files in {folder}")
+    OUT.mkdir(exist_ok=True)
+    total = 0
+    with open(OUT / "corpus.jsonl", "w", encoding="utf-8") as out:
+        for file in files:
+            segments = ex.read_office(file) if file.suffix.lower() in ex.OFFICE_EXT else ex.read_text_like(file)
+            for row in app.make_rows(web_name(folder, file), [s for s in segments if s["text"].strip()]):
+                out.write(json.dumps(row, ensure_ascii=False) + "\n")
+                total += 1
+    print(f"{len(files)} files -> {total} chunks in {OUT / 'corpus.jsonl'}")
 
 
 if __name__ == "__main__":

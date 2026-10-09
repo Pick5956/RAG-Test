@@ -15,8 +15,13 @@ import urllib.request
 
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434").rstrip("/")
 OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "iapp/chinda-qwen3-4b")
-TOP_SOURCES = 5  # chunks given to the model
+# Adaptive retrieval: start with the first 4 chunks; if the model says "not found", retry with 8 (env: ANSWER_STEPS="4,8")
+ADAPTIVE_STEPS = tuple(int(x) for x in os.environ.get("ANSWER_STEPS", "4,8").split(",") if x.strip().isdigit()) or (4, 8)
+TOP_SOURCES = max(ADAPTIVE_STEPS)  # how many ranked chunks the caller should fetch
 SOURCE_CHARS = 900  # per chunk
+CHARS_PER_TOKEN = 1.6  # conservative: measured 1.77 over the law corpus, 1.59 for the token-heaviest 5% of chunks
+PROMPT_MARGIN_TOKENS = 150
+NOT_FOUND = "ไม่พบข้อมูลในเอกสารที่ให้"
 ANSWER_CTX = 4096  # keep small: the KV cache must fit next to the embedding model on a 6 GB GPU
 ANSWER_MAX_TOKENS = 450
 REQUEST_TIMEOUT = 240
@@ -25,7 +30,10 @@ KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")  # how long the model st
 SYSTEM_PROMPT = (
     "คุณเป็นผู้ช่วยตอบคำถามจากเอกสารที่ให้ ตอบจากแหล่งข้อมูลที่ให้เท่านั้น ห้ามใช้ความรู้นอกเหนือจากนั้น "
     "อ้างอิงแหล่งที่มาด้วยเลขในวงเล็บเหลี่ยม เช่น [1] [2] ตามหมายเลขของแหล่งข้อมูล "
-    "ถ้าแหล่งข้อมูลไม่เพียงพอให้ตอบว่า 'ไม่พบข้อมูลในเอกสารที่ให้' ตอบเป็นภาษาไทยให้กระชับ /no_think"
+    "ห้ามเพิ่มความรู้นอกเหนือจากแหล่งข้อมูลแม้เพียงเล็กน้อย "
+    "ถ้าผู้ใช้พิมพ์เป็นข้อความยืนยัน ไม่ใช่คำถาม ให้ตอบว่าแหล่งข้อมูลสนับสนุน ขัดแย้ง หรือสนับสนุนบางส่วน พร้อมอ้างอิง [n] และสรุปสิ่งที่แหล่งข้อมูลพูดถึงเรื่องนั้น "
+    "ถ้าแหล่งข้อมูลไม่พูดถึงเรื่องที่ถามเลยให้ตอบเพียงประโยคเดียวว่า 'ไม่พบข้อมูลในเอกสารที่ให้' โดยไม่ต้องอธิบายเพิ่ม "
+    "ตอบเป็นภาษาไทยให้กระชับ /no_think"
 )
 
 
@@ -102,7 +110,7 @@ def warm_model() -> bool:
 
 def build_messages(question: str, sources: list[dict]) -> list[dict]:
     blocks = []
-    for n, s in enumerate(sources[:TOP_SOURCES], 1):
+    for n, s in enumerate(sources, 1):
         where = f"{s['law']} {s['section']}".strip()
         blocks.append(f"[{n}] ({where})\n{s['text'][:SOURCE_CHARS]}")
     user = "แหล่งข้อมูล:\n" + "\n\n".join(blocks) + f"\n\nคำถาม: {question}"
@@ -140,3 +148,51 @@ def ask(question: str, sources: list[dict]) -> dict:
     eval_s = (reply.get("eval_duration") or 0) / 1e9
     return {"answer": answer, "model": OLLAMA_MODEL, "seconds": round(time.time() - t0, 1),
             "tokens": reply.get("eval_count", 0), "tok_per_s": round(reply["eval_count"] / eval_s, 1) if eval_s else None}
+
+
+def fit_sources(question: str, sources: list[dict]) -> list[dict]:
+    """Keep the best-ranked sources that fit the context window (always at least one); the lowest ranks are dropped."""
+    room_tokens = ANSWER_CTX - ANSWER_MAX_TOKENS - PROMPT_MARGIN_TOKENS
+    budget = int(room_tokens * CHARS_PER_TOKEN) - len(SYSTEM_PROMPT) - len(question) - 60
+    used, total = [], 0
+    for s in sources:
+        cost = min(len(s["text"]), SOURCE_CHARS) + 40  # + the "[n] (law section)" label
+        if used and total + cost > budget:
+            break
+        used.append(s)
+        total += cost
+    return used
+
+
+def is_refusal(answer: str) -> bool:
+    """A refusal says 'not found' and cites nothing; an answer that cites [n] counts as an answer even if it adds a caveat."""
+    return NOT_FOUND in answer and not re.search(r"\[\d+\]", answer)
+
+
+def ask_adaptive(question: str, hits: list[dict]) -> dict:
+    """Ask with the first ADAPTIVE_STEPS[0] chunks; while the model refuses, retry with more (next step) until the last step.
+    A final refusal is reduced to the bare refusal sentence so no outside knowledge sneaks in after it."""
+    t0 = time.time()
+    rounds: list[dict] = []
+    final: tuple[dict, list[dict]] | None = None
+    total_tokens = 0
+    for step in sorted(set(s for s in ADAPTIVE_STEPS if s > 0)):
+        used = fit_sources(question, hits[: min(step, len(hits))])
+        if rounds and len(used) <= rounds[-1]["used"]:
+            break  # nothing new to add (too few hits, or the context budget is full)
+        if not used:
+            break
+        reply = ask(question, used)
+        refused = is_refusal(reply["answer"])
+        rounds.append({"k": step, "used": len(used), "refused": refused, "seconds": reply["seconds"]})
+        total_tokens += reply["tokens"]
+        final = (reply, used)
+        if not refused:
+            break
+    if final is None:
+        return {"answer": NOT_FOUND, "model": OLLAMA_MODEL, "seconds": round(time.time() - t0, 1), "tokens": 0,
+                "tok_per_s": None, "used_k": 0, "rounds": [], "sources": []}
+    reply, used = final
+    answer = NOT_FOUND if rounds[-1]["refused"] else reply["answer"]
+    return {"answer": answer, "model": OLLAMA_MODEL, "seconds": round(time.time() - t0, 1), "tokens": total_tokens,
+            "tok_per_s": reply.get("tok_per_s"), "used_k": len(used), "rounds": rounds, "sources": used}
