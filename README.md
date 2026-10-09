@@ -2,7 +2,8 @@
 
 ต้นแบบระบบ **RAG (ค้นเอกสารด้วยความหมาย + ให้ LLM ในเครื่องตอบจากเอกสาร)** ที่รันในเครื่องตัวเองทั้งหมด ไม่ส่งข้อมูลออกอินเทอร์เน็ต
 
-- ค้น **กฎหมายไทย 36 ฉบับ** (ชุดข้อมูล NitiBench-Statute, 5,127 มาตรา) ด้วยโมเดล embedding `Qwen3-Embedding-0.6B`
+- ค้นเอกสารด้วยความหมาย (โมเดล embedding `Qwen3-Embedding-0.6B`) แอปเริ่มว่างเปล่า ทุกอย่างอัปผ่านหน้าเว็บ มีข้อมูลตัวอย่างกฎหมายไทยกับบทคัดย่อวิจัย (SciFact) ใน `dataset/` ให้ลองอัป
+- **แท็บ "โลกบล็อก 3D":** ดูโซนเนื้อหาเป็นโลกสไตล์เกมบล็อก คลิกไบโอมเพื่อเข้าไปดูเฉพาะจุดในโซนนั้น
 - **ถาม AI:** ส่งชิ้นที่ค้นเจอ **4 ชิ้นก่อน ถ้าโมเดลตอบว่าไม่พบจึงขยายเป็น 8 ชิ้น** ให้ LLM ท้องถิ่น (ผ่าน Ollama, ค่าเริ่มต้น `iapp/chinda-qwen3-4b`) ตอบจากแหล่งที่ให้เท่านั้นพร้อมอ้างอิง [n] และตอบ "ไม่พบข้อมูล" เมื่อเอกสารไม่พอ
 - **อัปโหลดเอกสารของตัวเอง** (ไฟล์หรือทั้งโฟลเดอร์) แล้วระบบดึงข้อความ → หั่น → สร้างเวกเตอร์ → เพิ่มเป็นจุดบน **แผนที่ความหมาย** และค้นหาเจอทันที
 - รองรับ: `pdf` `txt` `md` `csv` `json` `html` `xml` `yaml` `docx` `pptx` `xlsx` และรูปภาพ (`png` `jpg` `tif` `bmp` `webp`) ถ้าเป็นสแกนหรือรูปจะอ่านด้วย OCR (PP-OCRv5 ภาษาไทย)
@@ -59,6 +60,76 @@ python -m venv .venv-paddle
 ```
 
 หมายเหตุ: ครั้งแรกที่ Paddle ทำงานจะดาวน์โหลดโมเดล OCR ขนาดเล็กลง `paddle_models/` เอง
+
+### ติดตั้งให้ครบเหมือนที่เราใช้ (เช็กลิสต์ทีละขั้น)
+
+ถ้าอยากได้ทุกอย่างเหมือนเครื่องที่พัฒนา (ค้นหา · OCR บน GPU · ถาม AI · โลกบล็อก 3D) ทำตามลำดับนี้ ขั้นที่ทำเองคือ 1, 2 และ 4 ส่วน `setup.ps1` ทำขั้น 3 ให้ ขั้นที่ไม่ได้ใช้ GPU หรือไม่ต้องการ OCR/ถาม AI ข้ามได้ตามหมายเหตุ
+
+**1) ติดตั้งโปรแกรมพื้นฐาน** (ทำครั้งเดียว ดาวน์โหลดจากเว็บของแต่ละตัว)
+- [Python 3.11](https://www.python.org/downloads/) ติ๊ก "Add python.exe to PATH" ตอนติดตั้ง
+- [Git](https://git-scm.com/download/win)
+- ไดรเวอร์ NVIDIA รุ่นใหม่ (ถ้ามีการ์ดจอ) ตรวจด้วย `nvidia-smi`
+- [Ollama](https://ollama.com/download) (เฉพาะถ้าจะใช้ปุ่ม "ถาม AI") ถ้าอยากลงไดรฟ์อื่น รัน `OllamaSetup.exe /DIR="D:\Ollama"` แล้วตั้ง "Model location" ในหน้า Settings ของแอปถาด (ดูหัวข้อ "ข้อควรรู้" ด้านล่าง)
+
+**2) ดึงโปรเจกต์ลง path ภาษาอังกฤษล้วน** (path ภาษาไทยทำให้ PaddleOCR พัง)
+
+```powershell
+git clone https://github.com/Pick5956/RAG-Test.git C:\work\rag-lab
+cd C:\work\rag-lab
+```
+
+**3) ติดตั้งส่วนของ Python ทั้งหมดด้วยสคริปต์เดียว**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File setup.ps1 -GpuOcr
+```
+
+สคริปต์นี้ทำให้: สร้าง `.venv` · ติดตั้ง PyTorch (รุ่น CUDA ถ้าพบ NVIDIA) กับแพ็กเกจใน `requirements.txt` · สร้าง `.venv-paddle` พร้อม PaddleOCR แบบ GPU · ดาวน์โหลดโมเดล embedding `Qwen3-Embedding-0.6B` (~1.2 GB) · ดาวน์โหลด `static/three.module.min.js` สำหรับแท็บ 3D ไม่มี GPU ใช้ `-CpuOcr` แทน `-GpuOcr` (OCR ช้ามาก) ดูแผนก่อนด้วย `-DryRun`
+
+**4) ดึงโมเดลสำหรับ "ถาม AI"** (ต้องมี Ollama จากขั้น 1)
+
+```powershell
+ollama pull iapp/chinda-qwen3-4b
+ollama list
+```
+
+**5) เปิดแอปและเช็กว่าครบ**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File run.ps1
+```
+
+เปิด http://127.0.0.1:8765 แล้วตรวจ:
+
+```powershell
+.\.venv\Scripts\python.exe -c "import torch; print('cuda:', torch.cuda.is_available())"
+curl http://127.0.0.1:8765/api/status
+curl http://127.0.0.1:11434/api/tags
+```
+
+ตัวแปรสภาพแวดล้อมที่ปรับได้ (ตั้งก่อนรัน เช่น `$env:ANSWER_STEPS="8"`):
+
+| ตัวแปร | ความหมาย | ค่าเริ่มต้น |
+|---|---|---|
+| `ANSWER_STEPS` | จำนวนชิ้นที่ส่งให้ AI แต่ละรอบ (`8` = ส่ง 8 ชิ้นรอบเดียว) | `4,8` |
+| `OLLAMA_MODEL` | โมเดลแชตของ Ollama | `iapp/chinda-qwen3-4b` |
+| `OLLAMA_KEEP_ALIVE` | เวลาที่โมเดลแชตค้างใน VRAM | `30m` |
+| `EMBED_RESIDENT` | `1` = เก็บโมเดล embedding ใน VRAM ตลอด (+1.2 GB) | `0` |
+| `APP_PORT` | พอร์ตของแอป | `8765` |
+| `APP_USER_DIR` | โฟลเดอร์เก็บไฟล์ที่อัปและคลังเอกสาร | โฟลเดอร์โปรเจกต์ |
+
+**6) เอาข้อมูลตัวอย่างขึ้นแอป** (ผ่านหน้าเว็บ ไม่ต้องรันสคริปต์ embed)
+
+`dataset/` ไม่ถูกเก็บในรีโป (ถูกกันไว้ใน `.gitignore`) ถ้าเครื่องใหม่ไม่มี ให้ดาวน์โหลดข้อมูลดิบแล้วสร้างไฟล์อัปด้วย `export_datasets.py` คำสั่งข้างล่าง **ยังไม่ได้ทดสอบจากเครื่องว่าง** (ชื่อรีโปของ NitiBench ในหน้าชุดข้อมูลเขียนไม่ตรงกันสองแบบ ถ้าอันแรกไม่ได้ให้ลอง `vistec-AI/nitibench-statute`):
+
+```powershell
+.\.venv\Scripts\python.exe -c "from huggingface_hub import snapshot_download as s; s('VISAI-AI/nitibench-statute', repo_type='dataset', local_dir='dataset/nitibench-statute/raw')"
+.\.venv\Scripts\python.exe -c "from huggingface_hub import snapshot_download as s; s('BeIR/scifact', repo_type='dataset', local_dir='dataset/beir-scifact/raw'); s('BeIR/scifact-qrels', repo_type='dataset', local_dir='dataset/beir-scifact/qrels')"
+Copy-Item dataset\beir-scifact\qrels\test.tsv dataset\beir-scifact\raw\qrels-test.tsv
+.\.venv\Scripts\python.exe export_datasets.py
+```
+
+จากนั้นในแท็บ "อัปโหลดเอกสาร": ลากโฟลเดอร์ `dataset\nitibench-statute\upload` (กฎหมายไทย 36 ไฟล์) และ/หรืออัป `dataset\beir-scifact\scifact-all.zip` (5,183 บทคัดย่อ ไฟล์เดียว) รอจนคิวเสร็จ แล้วเปิดแท็บ "โลกบล็อก 3D" ต้องมีอย่างน้อย 60 จุดบนแผนที่
 
 ## ข้อมูลตัวอย่าง (`dataset/`)
 
