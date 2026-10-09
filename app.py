@@ -425,8 +425,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         for key, value in (extra or {}).items():
             self.send_header(key, value)
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.end_headers()
+            self.wfile.write(body)
+        except ConnectionError:  # the browser reloaded / closed the tab mid-response; nothing to do
+            pass
 
     def _json(self, data, status: int = 200) -> None:
         self._send(json.dumps(data, ensure_ascii=False).encode(), "application/json; charset=utf-8", status)
