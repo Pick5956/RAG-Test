@@ -27,7 +27,7 @@
 ### ทางลัด (สคริปต์)
 
 ```powershell
-git clone <repo-url> rag-lab
+git clone https://github.com/Pick5956/RAG-Test.git rag-lab
 cd rag-lab
 powershell -ExecutionPolicy Bypass -File setup.ps1 -GpuOcr     # ดูแผนก่อนด้วย -DryRun
 powershell -ExecutionPolicy Bypass -File run.ps1
