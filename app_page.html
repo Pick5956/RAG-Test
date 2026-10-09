@@ -49,6 +49,23 @@
   .chip { padding: 5px 12px; background: transparent; border: 1.5px solid var(--line); border-radius: 99px; cursor: pointer; font-size: .85rem; transition: border-color .15s, background .15s; }
   .chip:hover { border-color: var(--ink); background: var(--card); }
   .notice { padding: 12px 16px; margin-bottom: 16px; border: 2px solid var(--ocr); background: var(--ocr-soft); font-size: .92rem; }
+  .btn.ask { background: var(--ocr); border-color: var(--ink); color: #fff; box-shadow: 4px 4px 0 var(--ink); }
+  .btn.ask:hover:not(:disabled) { box-shadow: 6px 6px 0 var(--ink); }
+  .btn.ask:disabled { background: var(--line); color: var(--muted); box-shadow: none; }
+  .askhint { margin: -4px 0 14px; font: 500 .78rem var(--mono); color: var(--muted); min-height: 1.2em; }
+  .askhint.busy { color: var(--warn); font-weight: 600; }
+  .answer { margin-bottom: 22px; border: 2px solid var(--ink); background: var(--card); animation: rise .35s both; }
+  .answer .ahead { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--ink); color: var(--paper); font: 700 .78rem var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+  .answer .ahead span { margin-left: auto; font-weight: 500; opacity: .75; letter-spacing: 0; text-transform: none; }
+  .answer .abody { padding: 16px 18px; font-size: 1.02rem; line-height: 1.75; white-space: pre-wrap; word-break: break-word; }
+  .answer .abody.err { color: var(--ocr); font-weight: 600; }
+  .answer .abody.wait { color: var(--muted); font: 500 .9rem var(--mono); animation: pulse 1.4s infinite; }
+  .cite { display: inline-block; margin: 0 2px; padding: 0 7px; background: var(--ocr); color: #fff; border: 0; cursor: pointer; font: 700 .78rem var(--mono); }
+  .cite:hover { background: var(--ink); }
+  .asrc { padding: 0 18px 14px; display: grid; gap: 6px; }
+  .asrc button { display: flex; gap: 10px; align-items: baseline; text-align: left; padding: 6px 10px; background: var(--paper); border: 1.5px solid var(--line); cursor: pointer; font-size: .86rem; }
+  .asrc button:hover { border-color: var(--ink); }
+  .asrc b { flex: none; padding: 0 7px; background: var(--ocr); color: #fff; font: 700 .75rem var(--mono); }
   .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 24px; align-items: start; }
   @media (max-width: 960px) { .split { grid-template-columns: 1fr; } }
   .panel { background: var(--card); border: 2px solid var(--ink); padding: 16px; }
@@ -163,8 +180,11 @@
     <form class="qrow" id="qform">
       <input id="q" autocomplete="off" aria-label="คำค้น" placeholder="เช่น หลักเกณฑ์การจัดซื้อจัดจ้างภาครัฐ">
       <button class="btn" id="go">ค้นหา</button>
+      <button class="btn ask" id="ask" type="button">ถาม AI</button>
     </form>
+    <p class="askhint" id="askhint"></p>
     <div class="chips" id="chips"></div>
+    <div class="answer hidden" id="answer"></div>
     <div class="split">
       <div class="panel"><span class="label" id="rlabel">ผลลัพธ์</span><div id="out"><p class="snip">พิมพ์คำถามแล้วกดค้นหา</p></div></div>
       <div class="panel" id="mappanel">
@@ -491,6 +511,7 @@ async function checkStatus() {
     const s = await api('/api/status');
     showNotice(s.available ? '' : s.reason);
     $('#go').disabled = !s.available;
+    setAskState(s);
     if (!s.available) { $('#loading').textContent = s.reason; $('#loading').classList.remove('hidden'); }
     else if (!G.loading && (!G.ready || s.version !== G.version)) { G.loading = true; await loadGraph(); G.loading = false; }
   } catch (e) { showNotice(e.message); }
@@ -531,6 +552,57 @@ function centroid(results) {
   return sw ? [x / sw, y / sw] : null;
 }
 $('#qform').onsubmit = e => { e.preventDefault(); search($('#q').value); };
+
+/* ---- ask the local LLM (answers only from the retrieved chunks) ---- */
+function setAskState(s) {
+  const busy = !!s.ingesting, hint = $('#askhint');
+  $('#ask').disabled = busy || !s.available;
+  $('#ask').title = busy ? 'กำลังลงเอกสารใหม่ · ถาม AI ได้เมื่อลงเสร็จ' : '';
+  hint.classList.toggle('busy', busy);
+  hint.textContent = busy ? `⏳ กำลังลงเอกสารใหม่ (${s.pending} ไฟล์ในคิว) · ปิดแชตไว้ชั่วคราว ค้นหาธรรมดายังใช้ได้` : (s.llm_model ? `ถาม AI ใช้โมเดล ${s.llm_model} (ตอบจากเอกสารที่ค้นเจอเท่านั้น)` : '');
+}
+
+function citeText(text, sources) {
+  const frag = document.createDocumentFragment();
+  let last = 0;
+  for (const m of text.matchAll(/\*\*([^*\n]+)\*\*|\[(\d+)\]/g)) {  // **bold** from the model, and [n] citations
+    frag.append(document.createTextNode(text.slice(last, m.index)));
+    if (m[1] != null) frag.append(el('strong', '', m[1]));
+    else {
+      const n = +m[2], src = sources.find(s => s.n === n);
+      if (src) { const b = el('button', 'cite', `[${n}]`); b.type = 'button'; b.title = `${src.law} ${src.section}`; b.onclick = () => focusNode(src.i); frag.append(b); }
+      else frag.append(document.createTextNode(m[0]));
+    }
+    last = m.index + m[0].length;
+  }
+  frag.append(document.createTextNode(text.slice(last)));
+  return frag;
+}
+
+async function askAI() {
+  const q = $('#q').value.trim(); if (!q) return;
+  const box = $('#answer'); box.classList.remove('hidden');
+  const head = el('div', 'ahead'); head.append('คำตอบจาก AI');
+  box.replaceChildren(head, el('div', 'abody wait', 'กำลังถาม AI… (ค้นหา → ส่งให้โมเดลอ่าน → สรุปคำตอบ)'));
+  $('#ask').disabled = true;
+  try {
+    const d = await api('/api/answer?q=' + encodeURIComponent(q));
+    head.append(el('span', '', `${d.model} · ${d.seconds} วินาที · ${d.tokens} โทเค็น`));
+    const body = el('div', 'abody'); body.append(citeText(d.answer, d.sources));
+    const src = el('div', 'asrc');
+    for (const s of d.sources) {
+      const b = el('button'); b.type = 'button';
+      b.append(el('b', '', String(s.n)), el('span', '', `${s.law} · ${s.section}${s.user ? ' (เอกสารของคุณ)' : ''}`));
+      b.onclick = () => focusNode(s.i); src.append(b);
+    }
+    box.replaceChildren(head, body, src);
+    if (!G.ready) await loadGraph();
+    G.hits = d.sources.map(s => s.i); G.qp = null; pinNode(-1); fitPoints(G.hits);
+  } catch (e) {
+    box.replaceChildren(head, el('div', 'abody err', e.message));
+  } finally { checkStatus(); }
+}
+$('#ask').onclick = askAI;
 
 /* ================= upload ================= */
 const U = { cfg: null, items: [], pumping: 0, timer: null, added: [], seq: 0 };
@@ -603,6 +675,7 @@ async function poll() {
 
 function finishBatch() {
   renderOverall();
+  checkStatus();  // chat unlocks as soon as the queue is empty
   const ok = U.items.filter(i => i.status === 'done');
   const pts = ok.reduce((n, i) => n + (i.sum?.chunks || 0), 0);
   if (U.added.length) {
@@ -722,7 +795,7 @@ $('#banner-go').onclick = () => { showTab('search'); setTimeout(() => { const na
 
 loadConfig();
 checkStatus();
-setInterval(() => { if (!$('#search').classList.contains('hidden')) checkStatus(); }, 5000);
+setInterval(checkStatus, 3000);  // also tracks whether documents are still being ingested (chat lock)
 </script>
 </body>
 </html>

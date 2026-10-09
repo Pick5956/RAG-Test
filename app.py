@@ -7,6 +7,7 @@ OCR runs in a child process (ocr_worker.py). Do not import paddle in this proces
 
 env (optional): APP_PORT, APP_USER_DIR (where uploads and the user library live), OCR_PYTHON, OCR_DEVICE
 """
+import gc
 import hashlib
 import json
 import os
@@ -26,6 +27,7 @@ import pymupdf
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 import extractors as ex
+import llm_client as llm
 import route_pdf as rp
 
 HERE = Path(__file__).parent
@@ -40,6 +42,10 @@ TOP_K = 10
 MIN_CHARS, IMAGE_AREA = 50, 0.20  # PDF routing thresholds (auto)
 MAX_UPLOAD, MAX_PAGES, MAX_CHUNKS = 100 * 1024 * 1024, 300, 5000
 RESULT_MARK = "@@RESULT@@ "
+# GPU policy. Normal mode: the chat LLM waits in VRAM and the embedding model is loaded only for the moment a query
+# needs it (~2-3 s). While documents are being ingested the roles swap: LLM unloaded, embedding model resident.
+# Set EMBED_RESIDENT=1 to keep the embedding model on the GPU all the time (fast search, ~1.2 GB more VRAM).
+EMBED_RESIDENT = os.environ.get("EMBED_RESIDENT", "0") == "1"
 MAX_SIDE, RENDER_DPI = 4000, 200  # PaddleOCR downsizes anything above MAX_SIDE anyway
 
 
@@ -84,8 +90,9 @@ class SearchIndex:
         self._lock = threading.RLock()
         self._gpu = threading.Lock()  # one GPU job (query / document embedding) at a time
         self._stamp: tuple | None = None
-        self._model = self._tok = None
+        self._model = self._tok = None  # the embedding model lives on the GPU only while it is needed
         self._device = "cpu"
+        self.keep_resident = EMBED_RESIDENT  # False: free the GPU after every embedding call (normal mode)
         self.law_docs: list[dict] = []
         self.law_vecs = self.mean = self.basis = None
         self.box: dict = {}
@@ -140,14 +147,6 @@ class SearchIndex:
         q = lambda a, f: float(np.quantile(a, f))  # noqa: E731
         self.box = {"x0": q(law_points[:, 0], .01), "x1": q(law_points[:, 0], .99),
                     "y0": q(law_points[:, 1], .01), "y1": q(law_points[:, 1], .99)}
-        if self._model is None:
-            import torch
-            from transformers import AutoModel, AutoTokenizer
-
-            self._device = "cuda" if torch.cuda.is_available() else "cpu"
-            dtype = torch.float16 if self._device == "cuda" else torch.float32
-            self._tok = AutoTokenizer.from_pretrained(MODEL_DIR, padding_side="left")
-            self._model = AutoModel.from_pretrained(MODEL_DIR, dtype=dtype).to(self._device).eval()
         self.law_docs, self.law_vecs, self.mean, self.basis = docs, vecs, mean, basis
         self._load_user(vecs.shape[1])
         self._rebuild()
@@ -186,18 +185,49 @@ class SearchIndex:
         d = self.docs[i]
         return {"law": doc_name(d), "section": self.labels[i], "text": d["text"][:2000]}
 
+    def _ensure_model(self) -> None:
+        """Load the embedding model onto the GPU if it is not there. Caller holds self._gpu."""
+        if self._model is not None:
+            return
+        import torch
+        from transformers import AutoModel, AutoTokenizer
+
+        self._device = "cuda" if torch.cuda.is_available() else "cpu"
+        dtype = torch.float16 if self._device == "cuda" else torch.float32
+        if self._tok is None:
+            self._tok = AutoTokenizer.from_pretrained(MODEL_DIR, padding_side="left")
+        self._model = AutoModel.from_pretrained(MODEL_DIR, dtype=dtype).to(self._device).eval()
+
+    def _drop_model(self) -> None:
+        """Free the GPU memory held by the embedding model. Caller holds self._gpu."""
+        if self._model is None:
+            return
+        import torch
+
+        self._model = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    def release_model(self) -> None:
+        with self._gpu:
+            self._drop_model()
+
     def embed_texts(self, texts: list[str], batch: int = 16) -> np.ndarray:
         import torch
         import torch.nn.functional as F
 
         out = []
         with self._gpu:
+            self._ensure_model()
             for i in range(0, len(texts), batch):
                 enc = self._tok([t + self._tok.eos_token for t in texts[i : i + batch]], padding=True, truncation=True,
                                 max_length=512, return_tensors="pt").to(self._device)
                 with torch.inference_mode():
                     vec = self._model(**enc).last_hidden_state[:, -1]
                 out.append(F.normalize(vec.float(), dim=-1).cpu().numpy())
+            if not self.keep_resident:
+                self._drop_model()
         return np.concatenate(out).astype(np.float32)
 
     def search(self, query: str) -> dict:
@@ -370,6 +400,9 @@ def process_job(job_id: str) -> None:
         if not rows:
             raise ValueError("ไม่พบข้อความในไฟล์นี้")
         update_job(job, status="embedding", note=f"หั่นได้ {len(rows)} ชิ้น กำลังสร้างเวกเตอร์")
+        llm.GATE.wait_for_answers()  # let an answer that is being generated finish first
+        llm.unload_model()  # ingest mode: free VRAM for the bulk embedding; chat stays blocked until the queue is empty
+        INDEX.keep_resident = True  # ... and keep the embedding model on the GPU for the whole batch of files
         error = INDEX.ensure()
         if error:
             raise RuntimeError(error)
@@ -379,11 +412,23 @@ def process_job(job_id: str) -> None:
     except Exception as exc:  # noqa: BLE001 - surfaced to the UI
         print(f"job {job_id} failed: {exc!r}", flush=True)
         update_job(job, status="error", error=f"{type(exc).__name__}: {exc}")
+    finally:
+        llm.GATE.job_finished()
+
+
+def settle_after_ingest() -> None:
+    """Back to normal mode once the queue is empty: embedding model off the GPU, chat LLM loaded again."""
+    INDEX.keep_resident = EMBED_RESIDENT
+    if not EMBED_RESIDENT:
+        INDEX.release_model()
+    threading.Thread(target=llm.warm_model, daemon=True).start()
 
 
 def worker_loop() -> None:
     while True:
         process_job(JOBQ.get())
+        if llm.GATE.pending == 0 and JOBQ.empty():
+            settle_after_ingest()
 
 
 def summary(job: dict) -> dict:
@@ -439,13 +484,37 @@ class Handler(BaseHTTPRequestHandler):
             job = JOBS.get(job_id)
             return json.loads(json.dumps(job, default=str)) if job else None
 
+    def _answer(self, question: str) -> None:
+        if not question:
+            return self._json({"error": "ใส่คำถามก่อน"}, 400)
+        if not llm.GATE.start_answer():
+            return self._json({"error": "กำลังลงเอกสารใหม่อยู่ · ถาม AI ได้เมื่อลงเสร็จ (ค้นหาธรรมดายังใช้ได้)", "busy": True}, 409)
+        try:
+            error = INDEX.ensure()
+            if error:
+                return self._json({"error": error}, 503)
+            hits = INDEX.search(question)["results"][: llm.TOP_SOURCES]
+            reply = llm.ask(question, hits)
+            reply["sources"] = [{"n": n, "i": h["i"], "law": h["law"], "section": h["section"], "user": h["user"],
+                                 "text": h["text"][:240]} for n, h in enumerate(hits, 1)]
+            return self._json(reply)
+        except llm.LlmError as exc:
+            return self._json({"error": str(exc)}, exc.status)
+        except Exception as exc:  # noqa: BLE001
+            return self._json({"error": f"{type(exc).__name__}: {exc}"}, 500)
+        finally:
+            llm.GATE.end_answer()
+
     def do_GET(self) -> None:
         url = urlparse(self.path)
         q = {k: v[0] for k, v in parse_qs(url.query).items()}
         if url.path == "/":
             return self._send(PAGE_HTML.read_bytes(), "text/html; charset=utf-8")
         if url.path == "/api/status":
-            return self._json(INDEX.status())
+            return self._json({**INDEX.status(), "ingesting": llm.GATE.pending > 0, "pending": llm.GATE.pending,
+                               "llm_model": llm.OLLAMA_MODEL})
+        if url.path == "/api/answer":
+            return self._answer(q.get("q", "").strip()[:500])
         if url.path == "/api/config":
             return self._json({"extensions": sorted(ex.SUPPORTED), "legacy": ex.LEGACY_HINT, "max_mb": MAX_UPLOAD >> 20})
         if url.path == "/api/library":
@@ -521,6 +590,7 @@ class Handler(BaseHTTPRequestHandler):
                "engine": "", "total": 0, "done": 0, "plan": [], "pages": {}, "preview": "", "chunks": 0, "note": ""}
         with JOBS_LOCK:
             JOBS[job_id] = job
+        llm.GATE.job_added()  # chat is refused from now until this job (and any others) finish
         JOBQ.put(job_id)
         self._json({"job": job_id, "name": name})
 
@@ -530,6 +600,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     threading.Thread(target=worker_loop, daemon=True).start()
+    threading.Thread(target=llm.warm_model, daemon=True).start()  # normal mode: the chat LLM waits in VRAM
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"ready: http://{HOST}:{PORT}", flush=True)
     server.serve_forever()
