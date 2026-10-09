@@ -1,0 +1,42 @@
+# --- Python environments and caches
+.venv/
+.venv-paddle/
+__pycache__/
+*.pyc
+
+# --- downloaded models (setup.ps1 fetches them again)
+Qwen3-Embedding-*/
+paddle_models/
+
+# --- generated data (rebuilt by build_corpus.py / embed_corpus.py)
+dataset/
+corpus.jsonl
+embeddings.npy
+
+# --- user data: uploaded documents and the user library. May hold real organisation documents - never commit.
+uploads/
+route_out/
+user_docs.jsonl
+user_vecs.npy
+
+# --- logs and scratch output
+*.log
+*.err
+*.tmp
+ocr_out/
+ocr_vl_out/
+
+# --- sample PDFs / personal documents
+*.pdf
+
+# --- local experiments and files superseded by app.py (kept on the author's disk only)
+route_app.py
+route_page.html
+search_app.py
+search_page.html
+make_compare.py
+compare_*.html
+ocr_pdf.py
+ocr_vl.py
+ocr_retrieval_test.py
+retrieval_test_results.txt

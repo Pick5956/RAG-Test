@@ -1,0 +1,4 @@
+# OPTIONAL: OCR on the CPU, installed into the main .venv (slow: roughly 10 s per page-sized image).
+# For fast OCR use the GPU environment instead: `setup.ps1 -GpuOcr` (see README.md).
+paddlepaddle==3.3.1
+paddleocr==3.7.0

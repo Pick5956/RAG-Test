@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAG Lab</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Noto+Sans+Thai:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f1ece1; --card: #fbf8f1; --ink: #15130f; --muted: #7c7365; --line: #d6cdbb;
+    --ocr: #ee4a24; --ocr-soft: #fde3da; --text: #1b7a58; --text-soft: #d9efe5; --warn: #b7791f; --stage: #0d0c0a;
+    --display: "Space Grotesk", "Noto Sans Thai", system-ui, sans-serif;
+    --body: "Noto Sans Thai", system-ui, sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --paper: #12110e; --card: #1b1915; --ink: #f1ebdd; --muted: #9a8f7d; --line: #38332a;
+            --ocr: #ff7550; --ocr-soft: #3a211a; --text: #4cc294; --text-soft: #17302a; --warn: #e0a84a; --stage: #070706; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font: 15px/1.55 var(--body); }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 3px solid var(--ocr); outline-offset: 2px; }
+  .hidden { display: none !important; }
+
+  .top { display: flex; align-items: end; gap: 28px; padding: 20px 28px 0; border-bottom: 2px solid var(--ink); flex-wrap: wrap; }
+  .brand { font: 700 1.9rem/1 var(--display); letter-spacing: -.03em; padding-bottom: 14px; }
+  .brand i { font-style: normal; color: var(--ocr); }
+  .tabs { display: flex; margin-left: auto; }
+  .tab { padding: 11px 22px; background: transparent; border: 2px solid transparent; border-bottom: 0; cursor: pointer; font: 700 .95rem var(--display); color: var(--muted); }
+  .tab[aria-selected="true"] { color: var(--ink); background: var(--card); border-color: var(--ink); margin-bottom: -2px; padding-bottom: 13px; }
+
+  main { max-width: 1360px; margin: 0 auto; padding: 28px 28px 70px; }
+  h1 { margin: 0 0 6px; font: 700 clamp(1.8rem, 1.1rem + 2.4vw, 2.8rem)/1.05 var(--display); letter-spacing: -.03em; }
+  h2 { margin: 28px 0 10px; font: 700 1.2rem var(--display); }
+  .lead { margin: 0 0 22px; color: var(--muted); max-width: 70ch; }
+  .label { font: 600 .72rem var(--mono); text-transform: uppercase; letter-spacing: .12em; color: var(--muted); }
+
+  /* search */
+  .qrow { display: flex; gap: 10px; margin-bottom: 12px; }
+  .qrow input { flex: 1; padding: 14px 16px; background: var(--card); border: 2px solid var(--ink); border-radius: 0; font-size: 1.05rem; }
+  .btn { padding: 14px 26px; background: var(--ink); color: var(--paper); border: 2px solid var(--ink); font: 700 1rem var(--display); cursor: pointer; transition: transform .12s, box-shadow .12s; }
+  .btn:hover:not(:disabled) { transform: translate(-2px,-2px); box-shadow: 4px 4px 0 var(--ocr); }
+  .btn:disabled { opacity: .4; cursor: not-allowed; }
+  .btn.alt { background: transparent; color: var(--ink); padding: 10px 20px; font-size: .92rem; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+  .chip { padding: 5px 12px; background: transparent; border: 1.5px solid var(--line); border-radius: 99px; cursor: pointer; font-size: .85rem; transition: border-color .15s, background .15s; }
+  .chip:hover { border-color: var(--ink); background: var(--card); }
+  .notice { padding: 12px 16px; margin-bottom: 16px; border: 2px solid var(--ocr); background: var(--ocr-soft); font-size: .92rem; }
+  .split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 24px; align-items: start; }
+  @media (max-width: 960px) { .split { grid-template-columns: 1fr; } }
+  .panel { background: var(--card); border: 2px solid var(--ink); padding: 16px; }
+  .panel > .label { margin-bottom: 10px; display: block; }
+  .hit { display: grid; grid-template-columns: 44px 1fr; gap: 10px; padding: 14px 8px; margin: 0 -8px; border-top: 1px solid var(--line); animation: rise .4s both; cursor: pointer; transition: background .15s; }
+  .hit:first-of-type { border-top: 0; padding-top: 8px; }
+  .hit:hover { background: var(--paper); }
+  .rank { font: 700 1.8rem/1 var(--display); color: var(--line); letter-spacing: -.04em; }
+  .hit:nth-of-type(-n+3) .rank { color: var(--ocr); }
+  .law { font-weight: 700; line-height: 1.35; word-break: break-word; }
+  .sec { display: inline-block; margin: 4px 6px 6px 0; padding: 1px 9px; background: var(--ink); color: var(--paper); font: 600 .75rem var(--mono); }
+  .mine { display: inline-block; padding: 1px 9px; border: 1.5px solid var(--ocr); color: var(--ocr); font: 600 .72rem var(--mono); }
+  .bar { height: 5px; background: var(--line); margin: 4px 0 8px; }
+  .bar i { display: block; height: 100%; background: var(--text); }
+  .snip { margin: 0; font-size: .9rem; color: var(--muted); }
+  .meta { font: 500 .75rem var(--mono); color: var(--muted); }
+
+  /* map */
+  .maphead { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .maphead .label { flex: 1; }
+  .mapbtns { display: flex; gap: 6px; }
+  .mapbtns button { width: 34px; height: 34px; background: transparent; border: 2px solid var(--ink); cursor: pointer; font: 700 1rem var(--mono); line-height: 1; }
+  .mapbtns button:hover { background: var(--ink); color: var(--paper); }
+  .stage { position: relative; height: 540px; background: var(--stage); border: 2px solid var(--ink); overflow: hidden; touch-action: none; cursor: grab; user-select: none; }
+  .stage.grabbing { cursor: grabbing; }
+  .stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  .stage .overlay { position: absolute; left: 12px; bottom: 10px; font: 500 .72rem var(--mono); color: #a89f8d; pointer-events: none; }
+  .stage .loading { position: absolute; inset: 0; display: grid; place-items: center; color: #a89f8d; font: 500 .85rem var(--mono); text-align: center; padding: 20px; }
+  .tip { position: absolute; z-index: 5; max-width: 330px; padding: 10px 12px; background: rgba(21,19,15,.94); color: #f1ebdd; border: 1px solid #5a5345; pointer-events: none; font-size: .82rem; line-height: 1.45; }
+  .tip b { display: block; font-size: .85rem; word-break: break-word; }
+  .tip em { display: inline-block; margin: 3px 0; padding: 0 7px; background: #f1ebdd; color: #15130f; font: 600 .7rem var(--mono); font-style: normal; }
+  .tip span { color: #bdb4a2; display: block; }
+  .detail { margin-top: 12px; padding: 12px 14px; border: 2px solid var(--ocr); background: var(--paper); }
+  .detail h3 { margin: 0 0 4px; font: 700 .98rem var(--display); word-break: break-word; }
+  .detail pre { max-height: 200px; margin-top: 8px; }
+  .laws { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; max-height: 150px; overflow: auto; }
+  .law-btn { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; background: transparent; border: 1.5px solid var(--line); border-radius: 99px; cursor: pointer; font-size: .76rem; transition: border-color .15s; max-width: 100%; }
+  .law-btn:hover, .law-btn[aria-pressed="true"] { border-color: var(--ink); background: var(--paper); }
+  .law-btn.user { border-color: var(--ocr); }
+  .law-btn i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .law-btn span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .law-btn small { font: 500 .68rem var(--mono); color: var(--muted); }
+  .panel.full { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; border: 0; padding: 14px 18px; }
+  .panel.full .stage { flex: 1; height: auto; }
+  .panel.full .laws { max-height: 90px; }
+
+  /* upload */
+  .drop { padding: 44px 20px; text-align: center; border: 2.5px dashed var(--ink); background: var(--card); transition: background .15s, border-color .15s; }
+  .drop.over { background: var(--ocr-soft); border-color: var(--ocr); }
+  .drop b { display: block; font: 700 1.6rem var(--display); letter-spacing: -.02em; margin-bottom: 4px; }
+  .drop > span { display: block; color: var(--muted); margin-bottom: 16px; }
+  .drop .btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  .formats { margin: 10px 0 0; font: 500 .75rem var(--mono); color: var(--muted); }
+  .banner { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 14px 18px; margin: 18px 0; border: 2px solid var(--text); background: var(--text-soft); }
+  .banner b { font: 700 1.05rem var(--display); }
+  .banner .btn { margin-left: auto; padding: 9px 18px; font-size: .9rem; }
+  .overall { display: flex; gap: 22px; flex-wrap: wrap; align-items: end; margin: 18px 0 8px; }
+  .big { font: 700 2.4rem/.9 var(--display); letter-spacing: -.04em; }
+  .big small { display: block; margin-top: 6px; font: 500 .68rem var(--mono); color: var(--muted); letter-spacing: .1em; text-transform: uppercase; }
+  .big.t { color: var(--text); } .big.o { color: var(--ocr); }
+  .qitem { background: var(--card); border: 2px solid var(--ink); margin-bottom: 10px; animation: rise .35s both; }
+  .qhead { display: flex; align-items: center; gap: 10px; padding: 10px 14px; flex-wrap: wrap; }
+  .kind { padding: 2px 8px; background: var(--ink); color: var(--paper); font: 700 .68rem var(--mono); letter-spacing: .08em; }
+  .qname { flex: 1; min-width: 160px; font-weight: 500; word-break: break-all; }
+  .chipst { padding: 2px 10px; font: 600 .72rem var(--mono); border: 1.5px solid var(--line); color: var(--muted); }
+  .chipst.run { border-color: var(--warn); color: var(--warn); } .chipst.done { border-color: var(--text); color: var(--text); }
+  .chipst.error { border-color: var(--ocr); color: var(--ocr); } .chipst.skipped { opacity: .7; }
+  .qbar { height: 4px; background: var(--line); }
+  .qbar i { display: block; height: 100%; width: 0; background: var(--text); transition: width .3s; }
+  .qbar i.pulse { width: 100% !important; animation: pulse 1.2s infinite; background: var(--warn); }
+  .qnote { padding: 6px 14px 10px; margin: 0; font: 500 .78rem var(--mono); color: var(--muted); }
+  .qnote.err { color: var(--ocr); }
+  .mini { padding: 4px 11px; background: transparent; border: 2px solid var(--ink); cursor: pointer; font: 600 .75rem var(--mono); }
+  .mini:hover { background: var(--ink); color: var(--paper); }
+  .qdetail { border-top: 2px solid var(--ink); padding: 14px; }
+  .pg { display: grid; grid-template-columns: 150px 1fr; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); }
+  .pg:first-child { border-top: 0; padding-top: 0; }
+  @media (max-width: 700px) { .pg { grid-template-columns: 1fr; } }
+  .pg img { width: 100%; border: 2px solid var(--ink); display: block; }
+  .rhead { display: flex; gap: 10px; align-items: center; margin-bottom: 6px; flex-wrap: wrap; }
+  .rhead h3 { margin: 0; font: 700 1rem var(--display); }
+  .badge { padding: 2px 9px; color: #fff; font: 700 .7rem var(--mono); letter-spacing: .1em; }
+  .badge.o { background: var(--ocr); } .badge.t { background: var(--text); }
+  .conf { font: 500 .76rem var(--mono); color: var(--muted); }
+  .conf.low { color: var(--ocr); font-weight: 600; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-word; font: 14px/1.7 var(--body); max-height: 300px; overflow: auto; }
+  .lib { display: grid; gap: 8px; }
+  .libitem { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--card); border: 2px solid var(--ink); flex-wrap: wrap; }
+  .libitem span.n { flex: 1; min-width: 160px; word-break: break-all; }
+  .libitem small { font: 500 .75rem var(--mono); color: var(--muted); }
+  .emptylib { color: var(--muted); font: 500 .85rem var(--mono); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(12px); } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="brand">RAG<i>/</i>Lab</div>
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="t-search" aria-selected="true">ค้นหา · แผนที่</button>
+    <button class="tab" role="tab" id="t-upload" aria-selected="false">อัปโหลดเอกสาร</button>
+  </div>
+</header>
+
+<main>
+  <!-- ======== SEARCH ======== -->
+  <section id="search">
+    <h1>ค้นด้วยความหมาย</h1>
+    <p class="lead">ค้นกฎหมายไทย 36 ฉบับและเอกสารที่คุณอัปโหลดพร้อมกัน พิมพ์เป็นภาษาไทยหรืออังกฤษ ระบบแสดง 10 ชิ้นที่ใกล้ที่สุดและโชว์ตำแหน่งบนแผนที่ความหมาย</p>
+    <div class="notice hidden" id="notice"></div>
+    <form class="qrow" id="qform">
+      <input id="q" autocomplete="off" aria-label="คำค้น" placeholder="เช่น หลักเกณฑ์การจัดซื้อจัดจ้างภาครัฐ">
+      <button class="btn" id="go">ค้นหา</button>
+    </form>
+    <div class="chips" id="chips"></div>
+    <div class="split">
+      <div class="panel"><span class="label" id="rlabel">ผลลัพธ์</span><div id="out"><p class="snip">พิมพ์คำถามแล้วกดค้นหา</p></div></div>
+      <div class="panel" id="mappanel">
+        <div class="maphead">
+          <span class="label">แผนที่ความหมาย · 1 จุด = 1 ชิ้น</span>
+          <div class="mapbtns">
+            <button id="z-in" aria-label="ซูมเข้า">+</button><button id="z-out" aria-label="ซูมออก">−</button>
+            <button id="z-reset" aria-label="รีเซ็ตมุมมอง">⟲</button><button id="z-full" aria-label="เต็มจอ">⛶</button>
+          </div>
+        </div>
+        <div class="stage" id="stage">
+          <canvas id="map" role="img" aria-label="แผนที่ความหมายของกฎหมายและเอกสารที่อัปโหลด"></canvas>
+          <div class="loading" id="loading">กำลังโหลดแผนที่…</div>
+          <div class="tip hidden" id="tip"></div>
+          <div class="overlay">ลากเพื่อเลื่อน · ล้อเมาส์เพื่อซูม · ดับเบิลคลิกเพื่อรีเซ็ต · คลิกจุดเพื่อปักหมุด · จุดมีวงขาว = เอกสารของคุณ</div>
+        </div>
+        <div class="detail hidden" id="detail"></div>
+        <div class="laws" id="laws"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ======== UPLOAD ======== -->
+  <section id="upload" class="hidden">
+    <h1>อัปโหลดแล้วขึ้นแผนที่ทันที</h1>
+    <p class="lead">ลากไฟล์หรือทั้งโฟลเดอร์มาวาง ระบบดึงข้อความ (OCR เมื่อจำเป็น) หั่น สร้างเวกเตอร์ แล้วเพิ่มเป็นจุดใหม่บนแผนที่ และค้นเจอได้ทันที ไม่ต้องทำอะไรต่อ</p>
+    <div class="drop" id="drop">
+      <b>ลากไฟล์หรือโฟลเดอร์มาวางที่นี่</b>
+      <span>หรือเลือกจากปุ่มด้านล่าง</span>
+      <div class="btns"><button class="btn alt" id="pick-files">เลือกไฟล์</button><button class="btn alt" id="pick-dir">เลือกทั้งโฟลเดอร์</button></div>
+      <p class="formats" id="formats"></p>
+    </div>
+    <input type="file" id="picker" multiple hidden>
+    <input type="file" id="dirpicker" webkitdirectory multiple hidden>
+
+    <div class="banner hidden" id="banner"><b id="banner-text"></b><button class="btn" id="banner-go">ดูบนแผนที่ →</button></div>
+    <div class="overall hidden" id="overall">
+      <div class="big" id="o-total">0<small>ไฟล์</small></div>
+      <div class="big t" id="o-done">0<small>เสร็จแล้ว</small></div>
+      <div class="big o" id="o-pts">0<small>จุดใหม่</small></div>
+    </div>
+    <div id="queue"></div>
+
+    <h2>คลังเอกสารของคุณ</h2>
+    <div class="lib" id="lib"><p class="emptylib">ยังไม่มีเอกสารในคลัง</p></div>
+  </section>
+</main>
+
+<script>
+const $ = s => document.querySelector(s);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || r.statusText);
+  return data;
+}
+
+/* ================= tabs ================= */
+function showTab(name) {
+  for (const t of ['search', 'upload']) {
+    $('#' + t).classList.toggle('hidden', t !== name);
+    $('#t-' + t).setAttribute('aria-selected', t === name);
+  }
+  if (name === 'search') requestAnimationFrame(() => resizeMap());
+  else loadLibrary();
+}
+$('#t-search').onclick = () => showTab('search');
+$('#t-upload').onclick = () => showTab('upload');
+
+/* ================= map ================= */
+const G = {
+  ready: false, n: 0, version: -1, wx: null, wy: null, law: null, laws: [], sec: [], nodesByLaw: [], isUser: null,
+  w: 0, h: 0, dpr: 1, k: 1, ox: 0, oy: 0, fit: 1, bounds: { x0: 0, x1: 1000, y0: 0, y1: 1000 },
+  hover: -1, pin: -1, hits: [], qp: null, isoHover: -1, isoLock: -1, raf: 0, tween: 0, docs: new Map(), tipTimer: 0,
+};
+const stage = $('#stage'), cv = $('#map'), ctx = cv.getContext('2d');
+const iso = () => (G.isoHover >= 0 ? G.isoHover : G.isoLock);
+const sx = i => G.wx[i] * G.k + G.ox, sy = i => G.wy[i] * G.k + G.oy;
+const lawColor = (l, a) => `hsla(${(l * 137.508) % 360}, 82%, 62%, ${a})`;
+
+async function loadGraph() {
+  try {
+    const d = await api('/api/points'), b = d.box;
+    G.n = d.points.length;
+    G.wx = Float32Array.from(d.points, p => (p[0] - b.x0) / (b.x1 - b.x0) * 1000);
+    G.wy = Float32Array.from(d.points, p => 1000 - (p[1] - b.y0) / (b.y1 - b.y0) * 1000);
+    G.law = d.law; G.laws = d.laws; G.sec = d.section; G.version = d.version;
+    G.nodesByLaw = G.laws.map(() => []);
+    G.isUser = new Uint8Array(G.n);
+    d.law.forEach((l, i) => { G.nodesByLaw[l].push(i); if (G.laws[l].user) G.isUser[i] = 1; });
+    G.hits = []; G.qp = null; G.docs.clear();
+    if (G.pin >= G.n) pinNode(-1);
+    G.isoLock = Math.min(G.isoLock, G.laws.length - 1);
+    // world bounds: the law area plus anything uploaded that falls outside it
+    let x0 = 0, x1 = 1000, y0 = 0, y1 = 1000;
+    for (let i = 0; i < G.n; i++) if (G.isUser[i]) { x0 = Math.min(x0, G.wx[i]); x1 = Math.max(x1, G.wx[i]); y0 = Math.min(y0, G.wy[i]); y1 = Math.max(y1, G.wy[i]); }
+    G.bounds = { x0, x1, y0, y1 };
+    G.ready = true; $('#loading').classList.add('hidden');
+    buildLegend(); computeFit(); G.firstView ? requestDraw() : (G.firstView = true, resetView(false));
+  } catch (e) { $('#loading').textContent = e.message; $('#loading').classList.remove('hidden'); }
+}
+
+function buildLegend() {
+  const box = $('#laws'); box.replaceChildren();
+  G.laws.forEach((law, l) => {
+    const b = el('button', 'law-btn' + (law.user ? ' user' : '')); b.type = 'button'; b.setAttribute('aria-pressed', l === G.isoLock); b.title = law.name;
+    const dot = el('i'); dot.style.background = lawColor(l, 1);
+    const name = law.user ? '★ ' + law.name : law.name.replace(/^พระราชบัญญัติ/, 'พ.ร.บ.').replace(/^พระราชกำหนด/, 'พ.ร.ก.');
+    b.append(dot, el('span', '', name), el('small', '', String(law.count)));
+    b.onmouseenter = () => { G.isoHover = l; requestDraw(); };
+    b.onmouseleave = () => { G.isoHover = -1; requestDraw(); };
+    b.onclick = () => { G.isoLock = G.isoLock === l ? -1 : l; box.querySelectorAll('.law-btn').forEach((x, i) => x.setAttribute('aria-pressed', i === G.isoLock)); requestDraw(); };
+    box.append(b);
+  });
+}
+
+function computeFit() {
+  const bw = Math.max(G.bounds.x1 - G.bounds.x0, 1), bh = Math.max(G.bounds.y1 - G.bounds.y0, 1);
+  G.fit = Math.min(G.w / bw, G.h / bh) * 0.92;
+}
+
+function resizeMap() {
+  const r = stage.getBoundingClientRect();
+  if (!r.width || !r.height) return;
+  G.dpr = window.devicePixelRatio || 1;
+  const first = !G.w;
+  G.w = r.width; G.h = r.height;
+  cv.width = Math.round(G.w * G.dpr); cv.height = Math.round(G.h * G.dpr);
+  computeFit();
+  if (first && G.ready) resetView(false); else requestDraw();
+}
+new ResizeObserver(() => resizeMap()).observe(stage);
+
+function resetView(animate = true) {
+  const b = G.bounds, k = G.fit;
+  const ox = G.w / 2 - (b.x0 + b.x1) / 2 * k, oy = G.h / 2 - (b.y0 + b.y1) / 2 * k;
+  animate ? tweenTo(k, ox, oy) : (G.k = k, G.ox = ox, G.oy = oy, requestDraw());
+}
+
+function tweenTo(k, ox, oy) {
+  cancelAnimationFrame(G.tween);
+  const from = { k: G.k, ox: G.ox, oy: G.oy }, t0 = performance.now(), dur = 380;
+  const step = now => {
+    const t = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - t, 3);
+    G.k = from.k + (k - from.k) * e; G.ox = from.ox + (ox - from.ox) * e; G.oy = from.oy + (oy - from.oy) * e;
+    draw();
+    if (t < 1) G.tween = requestAnimationFrame(step);
+  };
+  G.tween = requestAnimationFrame(step);
+}
+
+function zoomAt(px, py, factor) {
+  cancelAnimationFrame(G.tween);
+  const nk = Math.min(G.fit * 90, Math.max(G.fit * 0.7, G.k * factor)), r = nk / G.k;
+  G.ox = px - (px - G.ox) * r; G.oy = py - (py - G.oy) * r; G.k = nk; requestDraw();
+}
+
+function fitPoints(idx, extra) {
+  if (!idx.length && !extra) return;
+  const xs = idx.map(i => G.wx[i]).concat(extra ? [extra[0]] : []), ys = idx.map(i => G.wy[i]).concat(extra ? [extra[1]] : []);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  const size = Math.max(x1 - x0, y1 - y0, 80), k = Math.min(Math.min(G.w, G.h) / size * 0.62, G.fit * 14);
+  tweenTo(k, G.w / 2 - (x0 + x1) / 2 * k, G.h / 2 - (y0 + y1) / 2 * k);
+}
+
+function focusDoc(name) {
+  const l = G.laws.findIndex(x => x.user && x.name === name);
+  if (l < 0) return;
+  G.isoLock = -1; buildLegend(); fitPoints(G.nodesByLaw[l]);
+}
+
+function requestDraw() { if (!G.raf) G.raf = requestAnimationFrame(() => { G.raf = 0; draw(); }); }
+
+function draw() {
+  if (!G.ready) return;
+  const { w, h, k, ox, oy } = G, focus = G.hits.length > 0, dimIso = iso();
+  ctx.setTransform(G.dpr, 0, 0, G.dpr, 0, 0);
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue('--stage').trim() || '#0d0c0a';
+  ctx.fillRect(0, 0, w, h);
+  ctx.globalCompositeOperation = 'lighter';  // overlapping glows add up
+  const zoom = Math.log2(k / G.fit + 1), radius = Math.min(7, 1.6 + zoom * 1.5);
+  const onScreen = (x, y) => x > -20 && x < w + 20 && y > -20 && y < h + 20;
+
+  G.nodesByLaw.forEach((list, l) => {
+    const dim = dimIso >= 0 && l !== dimIso, user = G.laws[l].user;
+    ctx.fillStyle = lawColor(l, dim ? .1 : focus && !user ? .42 : .95);
+    const r = user ? radius + 1.2 : radius;
+    ctx.beginPath();
+    for (const i of list) {
+      const x = G.wx[i] * k + ox, y = G.wy[i] * k + oy;
+      if (!onScreen(x, y)) continue;
+      ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, 6.2832);
+    }
+    ctx.fill();
+  });
+
+  ctx.globalCompositeOperation = 'source-over';
+  G.laws.forEach((law, l) => {  // white ring marks nodes you uploaded
+    if (!law.user || (dimIso >= 0 && l !== dimIso)) return;
+    ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 1.2; ctx.beginPath();
+    for (const i of G.nodesByLaw[l]) {
+      const x = sx(i), y = sy(i);
+      if (!onScreen(x, y)) continue;
+      ctx.moveTo(x + radius + 3.4, y); ctx.arc(x, y, radius + 3.4, 0, 6.2832);
+    }
+    ctx.stroke();
+  });
+  if (G.hover >= 0 && G.hover !== G.pin) ring(G.hover, '#ffffff', radius + 5);
+  if (G.pin >= 0) ring(G.pin, '#ee4a24', radius + 7);
+
+  if (focus && G.qp) {
+    const qx = G.qp[0] * k + ox, qy = G.qp[1] * k + oy;
+    ctx.setLineDash([4, 5]); ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1; ctx.beginPath();
+    for (const i of G.hits) { ctx.moveTo(qx, qy); ctx.lineTo(sx(i), sy(i)); }
+    ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = '#ff7550'; ctx.lineWidth = 3.5; ctx.beginPath();
+    ctx.moveTo(qx - 9, qy - 9); ctx.lineTo(qx + 9, qy + 9); ctx.moveTo(qx + 9, qy - 9); ctx.lineTo(qx - 9, qy + 9); ctx.stroke();
+  }
+  G.hits.forEach((i, r) => {
+    const x = sx(i), y = sy(i);
+    ctx.fillStyle = lawColor(G.law[i], 1); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x, y, radius + 5, 0, 6.2832); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#0d0c0a'; ctx.font = '700 11px system-ui'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(r + 1, x, y + .5);
+  });
+}
+function ring(i, color, r) { ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(sx(i), sy(i), r, 0, 6.2832); ctx.stroke(); }
+
+function nearest(px, py) {
+  if (!G.ready) return -1;
+  const only = iso(); let best = -1, bd = 13 * 13;
+  for (let i = 0; i < G.n; i++) {
+    if (only >= 0 && G.law[i] !== only) continue;
+    const dx = sx(i) - px, dy = sy(i) - py, d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+
+async function getDoc(i) {
+  if (G.docs.has(i)) return G.docs.get(i);
+  const d = await api('/api/doc?i=' + i); G.docs.set(i, d); return d;
+}
+
+function showTip(i, px, py) {
+  const tip = $('#tip');
+  tip.replaceChildren(el('b', '', G.laws[G.law[i]].name), el('em', '', G.sec[i] || 'ข้อความ'));
+  const body = el('span', '', G.docs.has(i) ? G.docs.get(i).text.slice(0, 170) + '…' : '…'); tip.append(body);
+  tip.classList.remove('hidden');
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  tip.style.left = Math.min(G.w - tw - 8, Math.max(8, px + 16)) + 'px';
+  tip.style.top = Math.min(G.h - th - 8, Math.max(8, py + 16)) + 'px';
+  clearTimeout(G.tipTimer);
+  if (!G.docs.has(i)) G.tipTimer = setTimeout(async () => {
+    try { const d = await getDoc(i); if (G.hover === i) body.textContent = d.text.slice(0, 170) + '…'; } catch (e) { /* tooltip text is optional */ }
+  }, 120);
+}
+const hideTip = () => $('#tip').classList.add('hidden');
+
+async function pinNode(i) {
+  G.pin = i; requestDraw();
+  const box = $('#detail');
+  if (i < 0) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  box.replaceChildren(el('h3', '', G.laws[G.law[i]].name), el('span', 'sec', G.sec[i] || 'ข้อความ'), el('pre', '', 'กำลังโหลด…'));
+  try { const d = await getDoc(i); if (G.pin === i) box.querySelector('pre').textContent = d.text; } catch (e) { box.querySelector('pre').textContent = e.message; }
+}
+
+function focusNode(i) {
+  if (!G.ready) return;
+  const k = G.fit * 7;
+  tweenTo(k, G.w / 2 - G.wx[i] * k, G.h / 2 - G.wy[i] * k);
+  pinNode(i);
+}
+
+let drag = null;
+stage.addEventListener('pointerdown', e => {
+  stage.setPointerCapture(e.pointerId); cancelAnimationFrame(G.tween);
+  drag = { x: e.clientX, y: e.clientY, ox: G.ox, oy: G.oy, moved: false }; stage.classList.add('grabbing'); hideTip();
+});
+stage.addEventListener('pointermove', e => {
+  const r = stage.getBoundingClientRect(), px = e.clientX - r.left, py = e.clientY - r.top;
+  if (drag) {
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.hypot(dx, dy) > 3) drag.moved = true;
+    G.ox = drag.ox + dx; G.oy = drag.oy + dy; requestDraw(); return;
+  }
+  const i = nearest(px, py);
+  if (i !== G.hover) { G.hover = i; requestDraw(); }
+  i >= 0 ? showTip(i, px, py) : hideTip();
+});
+stage.addEventListener('pointerup', e => {
+  const wasClick = drag && !drag.moved; drag = null; stage.classList.remove('grabbing');
+  if (wasClick) { const r = stage.getBoundingClientRect(); pinNode(nearest(e.clientX - r.left, e.clientY - r.top)); }
+});
+stage.addEventListener('pointerleave', () => { if (!drag) { G.hover = -1; hideTip(); requestDraw(); } });
+stage.addEventListener('wheel', e => {
+  e.preventDefault();
+  const r = stage.getBoundingClientRect(); hideTip();
+  zoomAt(e.clientX - r.left, e.clientY - r.top, Math.exp(-e.deltaY * 0.0016));
+}, { passive: false });
+stage.addEventListener('dblclick', () => resetView());
+$('#z-in').onclick = () => zoomAt(G.w / 2, G.h / 2, 1.6);
+$('#z-out').onclick = () => zoomAt(G.w / 2, G.h / 2, 1 / 1.6);
+$('#z-reset').onclick = () => { G.hits = []; G.qp = null; pinNode(-1); resetView(); };
+$('#z-full').onclick = () => { $('#mappanel').classList.toggle('full'); setTimeout(resizeMap, 30); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && $('#mappanel').classList.contains('full')) $('#z-full').click(); });
+
+/* ================= search ================= */
+const QUERIES = ['การจดทะเบียนบริษัทมหาชนจำกัดต้องทำอย่างไร', 'หน้าที่ของกรรมการบริษัท', 'หลักเกณฑ์การจัดซื้อจัดจ้างภาครัฐ',
+  'พนักงานรัฐวิสาหกิจถูกเลิกจ้างได้เมื่อใด', 'ผู้ประกอบกิจการพลังงานต้องขออนุญาตอย่างไร', 'คนต่างด้าวประกอบธุรกิจในไทยได้หรือไม่',
+  'กองทุนสำรองเลี้ยงชีพคืออะไร', 'What is a public limited company?'];
+for (const text of QUERIES) {
+  const b = el('button', 'chip', text); b.type = 'button';
+  b.onclick = () => { $('#q').value = text; search(text); };
+  $('#chips').append(b);
+}
+function showNotice(msg) { const n = $('#notice'); n.textContent = msg || ''; n.classList.toggle('hidden', !msg); }
+
+async function checkStatus() {
+  try {
+    const s = await api('/api/status');
+    showNotice(s.available ? '' : s.reason);
+    $('#go').disabled = !s.available;
+    if (!s.available) { $('#loading').textContent = s.reason; $('#loading').classList.remove('hidden'); }
+    else if (!G.loading && (!G.ready || s.version !== G.version)) { G.loading = true; await loadGraph(); G.loading = false; }
+  } catch (e) { showNotice(e.message); }
+}
+
+async function search(q) {
+  q = q.trim(); if (!q) return;
+  $('#out').replaceChildren(el('p', 'snip', 'กำลังค้นหา… (ครั้งแรกอาจต้องโหลดโมเดล)'));
+  const t = performance.now();
+  try {
+    const d = await api('/api/search?q=' + encodeURIComponent(q));
+    showNotice('');
+    if (!G.ready || G.hits.length === 0) await loadGraph();
+    const ms = Math.round(performance.now() - t), max = d.results[0]?.score || 1;
+    $('#rlabel').textContent = `ผลลัพธ์ · ${ms} ms`;
+    $('#out').replaceChildren(...d.results.map((r, k) => {
+      const hit = el('div', 'hit'); hit.style.animationDelay = `${k * 40}ms`; hit.title = 'คลิกเพื่อดูตำแหน่งบนแผนที่';
+      const body = el('div');
+      const bar = el('div', 'bar'); const fill = el('i'); fill.style.width = Math.max(4, r.score / max * 100) + '%'; bar.append(fill);
+      body.append(el('div', 'law', r.law || '(ไม่ทราบชื่อ)'), el('span', 'sec', r.section || 'ข้อความ'));
+      if (r.user) body.append(el('span', 'mine', 'เอกสารของคุณ'));
+      body.append(bar, el('p', 'snip', r.text), el('div', 'meta', `cosine ${r.score.toFixed(3)}`));
+      hit.append(el('div', 'rank', String(k + 1)), body);
+      hit.onclick = () => focusNode(r.i);
+      return hit;
+    }));
+    if (G.ready) {
+      G.hits = d.results.map(r => r.i);
+      G.qp = centroid(d.results);
+      pinNode(-1); fitPoints(G.hits, G.qp);
+    }
+  } catch (e) { $('#out').replaceChildren(el('p', 'snip', e.message)); showNotice(e.message); }
+}
+/* the ✕ sits at the score-weighted centre of its top results (keeps it inside the nodes' own world frame) */
+function centroid(results) {
+  let sw = 0, x = 0, y = 0;
+  for (const r of results) { const w = Math.max(r.score, 0) ** 4; sw += w; x += G.wx[r.i] * w; y += G.wy[r.i] * w; }
+  return sw ? [x / sw, y / sw] : null;
+}
+$('#qform').onsubmit = e => { e.preventDefault(); search($('#q').value); };
+
+/* ================= upload ================= */
+const U = { cfg: null, items: [], pumping: 0, timer: null, added: [], seq: 0 };
+const KIND = { pdf: 'PDF', image: 'IMG', office: 'DOC', text: 'TXT' };
+const TERMINAL = new Set(['done', 'error', 'skipped']);
+const STATUS_TH = { waiting: 'รอ', uploading: 'กำลังอัปโหลด', queued: 'รอคิว', analyzing: 'วิเคราะห์', running: 'ประมวลผล', embedding: 'สร้างเวกเตอร์', done: 'เสร็จ', error: 'ผิดพลาด', skipped: 'ข้าม' };
+const HIDDEN = /(^|\/)(\.[^/]*|~\$[^/]*|thumbs\.db|desktop\.ini)$/i;
+
+async function loadConfig() {
+  U.cfg = await api('/api/config');
+  $('#formats').textContent = 'รองรับ: ' + U.cfg.extensions.map(e => e.slice(1)).join(' · ') + ' · ไฟล์ละไม่เกิน ' + U.cfg.max_mb + ' MB';
+}
+
+const extOf = n => { const m = /\.[^./\\]+$/.exec(n); return m ? m[0].toLowerCase() : ''; };
+
+function addFiles(entries) {
+  if (!U.cfg) return;
+  let fresh = 0;
+  for (const { file, rel } of entries) {
+    if (HIDDEN.test(rel)) continue;
+    const it = { key: ++U.seq, name: rel, file, status: 'waiting', kind: '', job: null, sum: null, error: '', note: '' };
+    const ext = extOf(rel);
+    if (U.cfg.legacy[ext]) { it.status = 'skipped'; it.note = U.cfg.legacy[ext]; }
+    else if (!U.cfg.extensions.includes(ext)) { it.status = 'skipped'; it.note = `ไม่รองรับไฟล์ชนิด ${ext || '(ไม่มีนามสกุล)'}`; }
+    else if (file.size > U.cfg.max_mb * 1048576) { it.status = 'skipped'; it.note = `ใหญ่เกิน ${U.cfg.max_mb} MB`; }
+    else if (file.size === 0) { it.status = 'skipped'; it.note = 'ไฟล์ว่าง'; }
+    U.items.push(it); fresh++;
+  }
+  if (!fresh) return;
+  $('#banner').classList.add('hidden'); U.added = [];
+  renderQueue(); pump();
+}
+
+async function pump() {
+  while (U.pumping < 3) {
+    const it = U.items.find(x => x.status === 'waiting');
+    if (!it) break;
+    it.status = 'uploading'; U.pumping++; renderRow(it);
+    upload(it).finally(() => { U.pumping--; pump(); });
+  }
+}
+async function upload(it) {
+  try {
+    const r = await api('/api/upload?name=' + encodeURIComponent(it.name), { method: 'POST', body: it.file });
+    it.job = r.job; it.status = 'queued'; it.file = null;
+    if (!U.timer) U.timer = setInterval(poll, 800);
+  } catch (e) { it.status = 'error'; it.error = e.message; }
+  renderRow(it);
+}
+
+let needGraph = false;
+async function poll() {
+  const active = U.items.filter(i => i.job && !TERMINAL.has(i.status));
+  if (!active.length) {
+    if (!U.items.some(i => i.status === 'waiting' || i.status === 'uploading')) { clearInterval(U.timer); U.timer = null; finishBatch(); }
+    return;
+  }
+  try {
+    const { jobs } = await api('/api/jobs?ids=' + active.map(i => i.job).join(','));
+    for (const s of jobs) {
+      const it = U.items.find(i => i.job === s.id); if (!it) continue;
+      const was = it.status; it.sum = s; it.status = s.status; it.kind = s.kind; it.error = s.error; it.note = s.note;
+      if (s.status === 'done' && was !== 'done') { needGraph = true; U.added.push(it); }
+      renderRow(it);
+    }
+    if (needGraph) { needGraph = false; loadGraph(); loadLibrary(); }
+  } catch (e) { /* transient; next tick retries */ }
+  renderOverall();
+}
+
+function finishBatch() {
+  renderOverall();
+  const ok = U.items.filter(i => i.status === 'done');
+  const pts = ok.reduce((n, i) => n + (i.sum?.chunks || 0), 0);
+  if (U.added.length) {
+    $('#banner-text').textContent = `เพิ่ม ${pts.toLocaleString()} จุดใหม่จาก ${U.added.length} ไฟล์แล้ว · ค้นหาเจอได้ทันที`;
+    $('#banner').classList.remove('hidden');
+  }
+}
+
+function renderOverall() {
+  const total = U.items.length, done = U.items.filter(i => i.status === 'done').length;
+  const pts = U.items.reduce((n, i) => n + (i.status === 'done' ? (i.sum?.chunks || 0) : 0), 0);
+  $('#overall').classList.toggle('hidden', !total);
+  $('#o-total').firstChild.textContent = total; $('#o-done').firstChild.textContent = done; $('#o-pts').firstChild.textContent = pts.toLocaleString();
+}
+
+function renderQueue() { for (const it of U.items) renderRow(it); renderOverall(); }
+
+function renderRow(it) {
+  const box = $('#queue');
+  let row = box.querySelector(`[data-k="${it.key}"]`);
+  if (!row) {
+    row = el('article', 'qitem'); row.dataset.k = it.key;
+    const head = el('div', 'qhead');
+    head.append(el('span', 'kind', '·'), el('span', 'qname', it.name), el('span', 'chipst', ''), el('span', 'acts'));
+    const bar = el('div', 'qbar'); bar.append(el('i'));
+    row.append(head, bar, el('p', 'qnote', ''), el('div', 'qdetail hidden'));
+    box.append(row);
+  }
+  const st = it.status, s = it.sum;
+  row.querySelector('.kind').textContent = KIND[it.kind || kindGuess(it.name)] || '·';
+  const chip = row.querySelector('.chipst');
+  chip.className = 'chipst ' + (st === 'done' ? 'done' : st === 'error' ? 'error' : st === 'skipped' ? 'skipped' : ['running', 'analyzing', 'embedding', 'uploading'].includes(st) ? 'run' : '');
+  chip.textContent = (STATUS_TH[st] || st) + (st === 'running' && s && s.total ? ` ${s.done}/${s.total}` : '');
+  const fill = row.querySelector('.qbar i');
+  fill.classList.toggle('pulse', st === 'embedding' || st === 'analyzing');
+  if (!fill.classList.contains('pulse')) fill.style.width = (st === 'done' ? 100 : st === 'running' && s && s.total ? s.done / s.total * 100 : 0) + '%';
+  const note = row.querySelector('.qnote');
+  const parts = [];
+  if (s && st !== 'queued' && s.kind === 'pdf' && s.total) parts.push(`${s.ocr_pages} หน้า OCR · ${s.text_pages} หน้าข้อความ${s.engine ? ' · OCR บน ' + s.engine.toUpperCase() : ''}`);
+  if (s && s.kind === 'image' && s.engine) parts.push('OCR บน ' + s.engine.toUpperCase());
+  if (it.error) parts.push(it.error); else if (it.note) parts.push(it.note);
+  note.textContent = parts.join(' · '); note.classList.toggle('err', !!it.error || st === 'error');
+  const acts = row.querySelector('.acts'); acts.replaceChildren();
+  if (it.job && st !== 'queued') {
+    const more = el('button', 'mini', row.querySelector('.qdetail').classList.contains('hidden') ? 'ดูข้อความ' : 'ซ่อน');
+    more.onclick = () => toggleDetail(it, row, more); acts.append(more);
+  }
+  if (st === 'done') { const map = el('button', 'mini', 'ดูบนแผนที่'); map.onclick = () => { showTab('search'); setTimeout(() => focusDoc(it.name), 80); }; acts.append(map); }
+}
+const kindGuess = n => ({ '.pdf': 'pdf', '.png': 'image', '.jpg': 'image', '.jpeg': 'image', '.tif': 'image', '.tiff': 'image', '.bmp': 'image', '.webp': 'image', '.docx': 'office', '.pptx': 'office', '.xlsx': 'office' }[extOf(n)] || 'text');
+
+async function toggleDetail(it, row, btn) {
+  const box = row.querySelector('.qdetail');
+  if (!box.classList.contains('hidden')) { box.classList.add('hidden'); btn.textContent = 'ดูข้อความ'; return; }
+  box.classList.remove('hidden'); btn.textContent = 'ซ่อน';
+  box.replaceChildren(el('p', 'qnote', 'กำลังโหลด…'));
+  try {
+    const j = await api('/api/job?id=' + it.job);
+    const keys = Object.keys(j.pages).sort((a, b) => a - b);
+    if (!keys.length) { box.replaceChildren(el('pre', '', j.preview || '(ยังไม่มีข้อความ)')); return; }
+    box.replaceChildren(...keys.map(k => {
+      const p = j.pages[k], isOcr = p.route === 'ocr', row2 = el('div', 'pg');
+      const img = Object.assign(document.createElement('img'), { src: `/api/thumb?id=${it.job}&page=${k}&w=260`, loading: 'lazy', alt: `หน้า ${k}` });
+      const right = el('div'), head = el('div', 'rhead');
+      head.append(el('h3', '', `หน้า ${k}`), el('span', 'badge ' + (isOcr ? 'o' : 't'), isOcr ? 'OCR' : 'TEXT'));
+      if (p.confidence != null) head.append(el('span', 'conf' + (p.confidence < .8 ? ' low' : ''), `ความมั่นใจ ${(p.confidence * 100).toFixed(0)}%`));
+      right.append(head, el('pre', '', p.text || '(ไม่มีข้อความ)')); row2.append(img, right);
+      return row2;
+    }));
+  } catch (e) { box.replaceChildren(el('p', 'qnote err', e.message)); }
+}
+
+async function loadLibrary() {
+  try {
+    const { docs } = await api('/api/library'), box = $('#lib');
+    if (!docs.length) { box.replaceChildren(el('p', 'emptylib', 'ยังไม่มีเอกสารในคลัง')); return; }
+    box.replaceChildren(...docs.map(d => {
+      const r = el('div', 'libitem');
+      const view = el('button', 'mini', 'ดูบนแผนที่'); view.onclick = () => { showTab('search'); setTimeout(() => focusDoc(d.name), 80); };
+      const del = el('button', 'mini', 'ลบ');
+      del.onclick = async () => {
+        if (!confirm(`ลบ "${d.name}" ออกจากคลังและแผนที่?\n(ไฟล์ต้นฉบับที่อัปโหลดยังอยู่ในโฟลเดอร์ uploads)`)) return;
+        await api('/api/delete?name=' + encodeURIComponent(d.name), { method: 'POST' });
+        loadGraph(); loadLibrary();
+      };
+      r.append(el('span', 'n', d.name), el('small', '', `${d.chunks} จุด`), view, del);
+      return r;
+    }));
+  } catch (e) { /* library is optional */ }
+}
+
+/* picking: files, folder, or drag & drop (folders included) */
+$('#pick-files').onclick = () => $('#picker').click();
+$('#pick-dir').onclick = () => $('#dirpicker').click();
+$('#picker').onchange = e => { addFiles([...e.target.files].map(file => ({ file, rel: file.name }))); e.target.value = ''; };
+$('#dirpicker').onchange = e => { addFiles([...e.target.files].map(file => ({ file, rel: file.webkitRelativePath || file.name }))); e.target.value = ''; };
+const drop = $('#drop');
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = async e => {
+  e.preventDefault(); drop.classList.remove('over');
+  const entries = [...e.dataTransfer.items].map(i => (i.webkitGetAsEntry ? i.webkitGetAsEntry() : null)).filter(Boolean);
+  if (!entries.length) { addFiles([...e.dataTransfer.files].map(file => ({ file, rel: file.name }))); return; }
+  const out = []; for (const ent of entries) await walk(ent, '', out);
+  addFiles(out);
+};
+async function walk(entry, prefix, out) {
+  if (entry.isFile) { const file = await new Promise((ok, no) => entry.file(ok, no)); out.push({ file, rel: prefix + entry.name }); return; }
+  const reader = entry.createReader();
+  for (;;) {
+    const batch = await new Promise((ok, no) => reader.readEntries(ok, no));
+    if (!batch.length) break;
+    for (const child of batch) await walk(child, prefix + entry.name + '/', out);
+  }
+}
+$('#banner-go').onclick = () => { showTab('search'); setTimeout(() => { const names = [...new Set(U.added.map(i => i.name))]; names.length === 1 ? focusDoc(names[0]) : resetView(); }, 80); };
+
+loadConfig();
+checkStatus();
+setInterval(() => { if (!$('#search').classList.contains('hidden')) checkStatus(); }, 5000);
+</script>
+</body>
+</html>
